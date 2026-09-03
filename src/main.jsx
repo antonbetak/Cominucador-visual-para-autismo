@@ -623,7 +623,7 @@ function App() {
         setChildren(loadChildren(auth.currentUser.uid));
       }
       setAuthLoading(false);
-      setCloudStatus("Sincronizando en segundo plano");
+      setCloudStatus("Usando datos guardados en este dispositivo");
     }, 4500);
 
     getRedirectResult(auth).catch(() => {
@@ -642,6 +642,7 @@ function App() {
         setBoard(nextBoard);
         setActiveCategoryId(nextBoard.categories[0]?.id);
         setPhrase([]);
+        setCloudStatus("");
       } else {
         setAuthUser(null);
         setChildren([]);
@@ -649,6 +650,7 @@ function App() {
         setBoard(defaultBoard);
         setActiveCategoryId(defaultBoard.categories[0]?.id);
         setPhrase([]);
+        setCloudStatus("");
       }
       window.clearTimeout(loadingFallback);
       setAuthLoading(false);
@@ -665,15 +667,19 @@ function App() {
 
     if (!db) return;
     const timeout = window.setTimeout(async () => {
+      setCloudStatus("Guardando cambios...");
       try {
-        await setDoc(doc(db, "users", authUser.uid, "boards", activeChildId), {
-          board,
-          childId: activeChildId,
-          updatedAt: serverTimestamp(),
-        });
+        await withTimeout(
+          setDoc(doc(db, "users", authUser.uid, "boards", activeChildId), {
+            board,
+            childId: activeChildId,
+            updatedAt: serverTimestamp(),
+          }),
+          3000,
+        );
         setCloudStatus("Guardado en la nube");
       } catch {
-        setCloudStatus("Guardado localmente");
+        setCloudStatus("Guardado en este dispositivo");
       }
     }, 600);
 
@@ -880,14 +886,18 @@ function App() {
     setActiveChildId(nextChild.id);
     if (authUser) localStorage.setItem(getActiveChildStorageKey(authUser.uid), nextChild.id);
     if (authUser && db) {
+      setCloudStatus("Guardando perfil...");
       try {
-        await setDoc(doc(db, "users", authUser.uid, "children", nextChild.id), {
-          ...nextChild,
-          updatedAt: serverTimestamp(),
-        });
+        await withTimeout(
+          setDoc(doc(db, "users", authUser.uid, "children", nextChild.id), {
+            ...nextChild,
+            updatedAt: serverTimestamp(),
+          }),
+          3000,
+        );
         setCloudStatus("Perfil guardado en la nube");
       } catch {
-        setCloudStatus("Perfil guardado localmente");
+        setCloudStatus("Perfil guardado en este dispositivo");
       }
     }
     const savedBoard = isNewChild ? null : await loadCloudBoard(authUser?.uid, nextChild.id);
@@ -895,13 +905,17 @@ function App() {
     if (authUser) localStorage.setItem(getBoardStorageKey(authUser.uid, nextChild.id), JSON.stringify(nextBoard));
     if (authUser && db) {
       try {
-        await setDoc(doc(db, "users", authUser.uid, "boards", nextChild.id), {
-          board: nextBoard,
-          childId: nextChild.id,
-          updatedAt: serverTimestamp(),
-        });
+        await withTimeout(
+          setDoc(doc(db, "users", authUser.uid, "boards", nextChild.id), {
+            board: nextBoard,
+            childId: nextChild.id,
+            updatedAt: serverTimestamp(),
+          }),
+          3000,
+        );
+        setCloudStatus("Guardado en la nube");
       } catch {
-        setCloudStatus("Tablero personalizado guardado localmente");
+        setCloudStatus("Tablero guardado en este dispositivo");
       }
     }
     setBoard(nextBoard);
