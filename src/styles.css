@@ -1331,12 +1331,14 @@ input[type="checkbox"] {
   }
 
   .workspace {
-    padding: 12px 12px 28px;
+    padding: 12px 12px calc(92px + env(safe-area-inset-bottom));
   }
 
   .sidebar {
     gap: 10px;
-    max-height: 52dvh;
+    position: static;
+    max-height: none;
+    overflow: visible;
     padding: 10px;
   }
 
@@ -1398,7 +1400,7 @@ input[type="checkbox"] {
   .child-switcher select {
     min-height: 44px;
     padding: 0 38px 0 12px;
-    font-size: 1rem;
+    font-size: 1.02rem;
   }
 
   .child-switcher p,
@@ -1408,17 +1410,19 @@ input[type="checkbox"] {
   }
 
   .category-list {
-    grid-auto-columns: minmax(118px, 38vw);
+    grid-auto-columns: minmax(118px, 40vw);
     gap: 8px;
     margin-inline: -2px;
-    padding-inline: 2px;
+    padding: 0 2px 4px;
+    overflow-y: visible;
   }
 
   .category-button {
-    min-height: 42px;
+    min-height: 58px;
     padding: 8px 10px;
     font-size: 0.94rem;
     line-height: 1.15;
+    white-space: normal;
   }
 
   .category-button,
@@ -1458,8 +1462,12 @@ input[type="checkbox"] {
   }
 
   .phrase-actions {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    display: flex;
+    justify-content: flex-start;
+  }
+
+  .phrase-actions > * {
+    flex: 0 0 44px;
   }
 
   .phrase-output {
@@ -1470,12 +1478,14 @@ input[type="checkbox"] {
   .phrase-output button {
     min-width: 70px;
     min-height: 38px;
+    padding-inline: 12px;
   }
 
   .tile-grid.large,
   .tile-grid.compact {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 9px;
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   .comm-tile,
