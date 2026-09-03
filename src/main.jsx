@@ -627,6 +627,7 @@ function App() {
   const [editingChild, setEditingChild] = useState(null);
   const [cloudStatus, setCloudStatus] = useState("");
   const [voices, setVoices] = useState([]);
+  const cloudBootstrapKey = useRef("");
 
   const activeCategory = board.categories.find((category) => category.id === activeCategoryId) || board.categories[0];
   const activeChild = children.find((child) => child.id === activeChildId);
@@ -710,6 +711,54 @@ function App() {
     if (!authUser) return;
     localStorage.setItem(getChildrenStorageKey(authUser.uid), JSON.stringify(children));
   }, [authUser, children]);
+
+  useEffect(() => {
+    if (!authUser || !db || !children.length) return;
+    const syncKey = `${authUser.uid}:${children.map((child) => `${child.id}-${child.updatedAt}`).join("|")}`;
+    if (cloudBootstrapKey.current === syncKey) return;
+    cloudBootstrapKey.current = syncKey;
+
+    let isCancelled = false;
+
+    async function syncLocalProfilesToCloud() {
+      setCloudStatus("Subiendo perfiles a Firebase...");
+      try {
+        await Promise.all(
+          children.map((child) =>
+            withTimeout(
+              setDoc(doc(db, "users", authUser.uid, "children", child.id), {
+                ...child,
+                updatedAt: serverTimestamp(),
+              }),
+              5000,
+            ),
+          ),
+        );
+        await Promise.all(
+          children.map((child) => {
+            const savedBoard = child.id === activeChildId ? board : loadBoard(authUser.uid, child.id);
+            const nextBoard = mergePersonalizedBoard(savedBoard, child);
+            return withTimeout(
+              setDoc(doc(db, "users", authUser.uid, "boards", child.id), {
+                board: nextBoard,
+                childId: child.id,
+                updatedAt: serverTimestamp(),
+              }),
+              5000,
+            );
+          }),
+        );
+        if (!isCancelled) setCloudStatus("Guardado en la nube");
+      } catch {
+        if (!isCancelled) setCloudStatus("Guardado en este dispositivo");
+      }
+    }
+
+    syncLocalProfilesToCloud();
+    return () => {
+      isCancelled = true;
+    };
+  }, [authUser, children, activeChildId]);
 
   useEffect(() => {
     if (!authUser || !activeChild) return;
