@@ -205,12 +205,14 @@ function splitProfileItems(value) {
     .slice(0, 8);
 }
 
-function buildPersonalizedBoard(child) {
+const personalizedCategoryIds = ["gustos", "calma", "evitar", "rutinas"];
+
+function getPersonalizedCategories(child) {
   const interests = splitProfileItems(child.interests);
   const comforts = splitProfileItems(child.comforts);
   const dislikes = splitProfileItems(`${child.sensitivities}\n${child.dislikes}`);
   const routines = splitProfileItems(child.routines);
-  const categories = [...defaultBoard.categories];
+  const categories = [];
 
   if (interests.length) {
     categories.push({
@@ -248,11 +250,31 @@ function buildPersonalizedBoard(child) {
     });
   }
 
+  return categories;
+}
+
+function buildPersonalizedBoard(child) {
+  const categories = [...defaultBoard.categories, ...getPersonalizedCategories(child)];
+
   return {
     ...defaultBoard,
     categories,
     settings: {
       ...defaultBoard.settings,
+      largeTiles: child.communicationLevel === "Primeras palabras" || child.communicationLevel === "Necesita apoyo constante",
+    },
+  };
+}
+
+function mergePersonalizedBoard(board, child) {
+  return {
+    ...board,
+    categories: [
+      ...board.categories.filter((category) => !personalizedCategoryIds.includes(category.id)),
+      ...getPersonalizedCategories(child),
+    ],
+    settings: {
+      ...board.settings,
       largeTiles: child.communicationLevel === "Primeras palabras" || child.communicationLevel === "Necesita apoyo constante",
     },
   };
@@ -868,9 +890,10 @@ function App() {
         setCloudStatus("Perfil guardado localmente");
       }
     }
-    const nextBoard = isNewChild ? buildPersonalizedBoard(nextChild) : await loadCloudBoard(authUser?.uid, nextChild.id);
+    const savedBoard = isNewChild ? null : await loadCloudBoard(authUser?.uid, nextChild.id);
+    const nextBoard = isNewChild ? buildPersonalizedBoard(nextChild) : mergePersonalizedBoard(savedBoard, nextChild);
     if (authUser) localStorage.setItem(getBoardStorageKey(authUser.uid, nextChild.id), JSON.stringify(nextBoard));
-    if (authUser && db && isNewChild) {
+    if (authUser && db) {
       try {
         await setDoc(doc(db, "users", authUser.uid, "boards", nextChild.id), {
           board: nextBoard,
@@ -1247,6 +1270,11 @@ function ChildProfileForm({ child, submitLabel, onSave, onCancel }) {
     notes: child?.notes || "",
     createdAt: child?.createdAt,
   });
+  const generatedCategories = useMemo(
+    () => getPersonalizedCategories(createChildProfile({ ...draft, name: draft.name || "Perfil" })),
+    [draft],
+  );
+  const generatedCount = generatedCategories.reduce((total, category) => total + category.tiles.length, 0);
 
   function updateField(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -1312,6 +1340,29 @@ function ChildProfileForm({ child, submitLabel, onSave, onCancel }) {
         <textarea value={draft.notes} onChange={(event) => updateField("notes", event.target.value)} placeholder="Algo importante para acompañarle mejor" />
       </label>
 
+      <section className="generated-preview" aria-live="polite">
+        <div>
+          <strong>{generatedCount ? `${generatedCount} tarjetas listas` : "Tarjetas personalizadas"}</strong>
+          <span>Nunu creará categorías nuevas con lo que escribas aquí.</span>
+        </div>
+        {generatedCategories.length ? (
+          <div className="generated-category-list">
+            {generatedCategories.map((category) => (
+              <article key={category.id} style={{ "--preview-color": category.color }}>
+                <h3>{category.name}</h3>
+                <div>
+                  {category.tiles.slice(0, 6).map((item) => (
+                    <span key={item.label}>{item.label}</span>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p>Escribe gustos, apoyos, sensibilidades o rutinas separados por comas para ver las tarjetas sugeridas.</p>
+        )}
+      </section>
+
       <footer className="modal-actions profile-actions">
         {onCancel ? (
           <button className="secondary-button" type="button" onClick={onCancel}>
@@ -1319,7 +1370,7 @@ function ChildProfileForm({ child, submitLabel, onSave, onCancel }) {
           </button>
         ) : null}
         <button className="primary-button" type="submit">
-          <Check size={18} /> {submitLabel}
+          <Check size={18} /> {generatedCount ? `${submitLabel} con ${generatedCount} tarjetas` : submitLabel}
         </button>
       </footer>
     </form>
