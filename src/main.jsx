@@ -1,12 +1,24 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  createUserWithEmailAndPassword,
+  getRedirectResult,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+  updateProfile,
+} from "firebase/auth";
+import { collection, doc, getDoc, getDocs, serverTimestamp, setDoc } from "firebase/firestore";
+import {
   ArrowLeft,
   Camera,
   Check,
   Download,
   Image as ImageIcon,
   Link,
+  LogOut,
   Mic,
   MicOff,
   Pencil,
@@ -21,9 +33,13 @@ import {
   Volume2,
   X,
 } from "lucide-react";
+import { auth, db, googleProvider, isFirebaseConfigured } from "./firebase";
 import "./styles.css";
+import logoNunuUrl from "../logo_nunu.jpeg";
 
 const STORAGE_KEY = "nunu-comunicador-v1";
+const CHILDREN_STORAGE_KEY = "nunu-comunicador-children-v1";
+const ACTIVE_CHILD_STORAGE_KEY = "nunu-comunicador-active-child-v1";
 
 const colorOptions = [
   "#F9E66B",
@@ -97,13 +113,88 @@ function uid(prefix = "id") {
   return `${prefix}-${crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36)}`;
 }
 
-function loadBoard() {
+function getBoardStorageKey(userId, childId) {
+  if (userId && childId) return `${STORAGE_KEY}-${userId}-${childId}`;
+  return userId ? `${STORAGE_KEY}-${userId}` : STORAGE_KEY;
+}
+
+function getChildrenStorageKey(userId) {
+  return `${CHILDREN_STORAGE_KEY}-${userId}`;
+}
+
+function getActiveChildStorageKey(userId) {
+  return `${ACTIVE_CHILD_STORAGE_KEY}-${userId}`;
+}
+
+function loadBoard(userId, childId) {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? JSON.parse(stored) : defaultBoard;
+    const stored = localStorage.getItem(getBoardStorageKey(userId, childId));
+    if (stored) return JSON.parse(stored);
+
+    const legacyBoard = userId ? localStorage.getItem(STORAGE_KEY) : "";
+    return legacyBoard ? JSON.parse(legacyBoard) : defaultBoard;
   } catch {
     return defaultBoard;
   }
+}
+
+function loadChildren(userId) {
+  try {
+    const stored = localStorage.getItem(getChildrenStorageKey(userId));
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+function withTimeout(promise, timeoutMs = 3500) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      window.setTimeout(() => reject(new Error("timeout")), timeoutMs);
+    }),
+  ]);
+}
+
+async function loadCloudChildren(userId) {
+  const localChildren = loadChildren(userId);
+  if (!db) return localChildren;
+
+  try {
+    const snapshot = await withTimeout(getDocs(collection(db, "users", userId, "children")));
+    const cloudChildren = snapshot.docs.map((childDoc) => ({ id: childDoc.id, ...childDoc.data() }));
+    return cloudChildren.length ? cloudChildren : localChildren;
+  } catch {
+    return localChildren;
+  }
+}
+
+async function loadCloudBoard(userId, childId) {
+  if (!db) return loadBoard(userId, childId);
+
+  try {
+    const snapshot = await withTimeout(getDoc(doc(db, "users", userId, "boards", childId)));
+    return snapshot.exists() && snapshot.data().board ? snapshot.data().board : loadBoard(userId, childId);
+  } catch {
+    return loadBoard(userId, childId);
+  }
+}
+
+function createChildProfile(data) {
+  return {
+    id: data.id || uid("child"),
+    name: data.name.trim(),
+    age: data.age.trim(),
+    communicationLevel: data.communicationLevel,
+    interests: data.interests.trim(),
+    comforts: data.comforts.trim(),
+    sensitivities: data.sensitivities.trim(),
+    dislikes: data.dislikes.trim(),
+    routines: data.routines.trim(),
+    notes: data.notes.trim(),
+    createdAt: data.createdAt || Date.now(),
+    updatedAt: Date.now(),
+  };
 }
 
 function getSupportedAudioMimeType() {
@@ -419,23 +510,97 @@ function TileImage({ src, fallbackSize = 48 }) {
 }
 
 function App() {
-  const [board, setBoard] = useState(loadBoard);
+  const [authUser, setAuthUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState("");
+  const [board, setBoard] = useState(defaultBoard);
   const [activeCategoryId, setActiveCategoryId] = useState(board.categories[0]?.id);
   const [phrase, setPhrase] = useState([]);
   const [editingTile, setEditingTile] = useState(null);
   const [editingCategory, setEditingCategory] = useState(null);
   const [isManageOpen, setIsManageOpen] = useState(false);
+  const [children, setChildren] = useState([]);
+  const [activeChildId, setActiveChildId] = useState("");
+  const [editingChild, setEditingChild] = useState(null);
+  const [cloudStatus, setCloudStatus] = useState("");
   const [voices, setVoices] = useState([]);
 
   const activeCategory = board.categories.find((category) => category.id === activeCategoryId) || board.categories[0];
+  const activeChild = children.find((child) => child.id === activeChildId);
 
   useEffect(() => {
+    if (!isFirebaseConfigured || !auth) {
+      setAuthLoading(false);
+      return undefined;
+    }
+
+    const loadingFallback = window.setTimeout(() => {
+      if (auth.currentUser) {
+        setAuthUser(auth.currentUser);
+        setChildren(loadChildren(auth.currentUser.uid));
+      }
+      setAuthLoading(false);
+      setCloudStatus("Sincronizando en segundo plano");
+    }, 4500);
+
+    getRedirectResult(auth).catch(() => {
+      setAuthError("No se pudo completar el inicio de sesión.");
+    });
+
+    return onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        const nextChildren = await loadCloudChildren(user.uid);
+        const storedChildId = localStorage.getItem(getActiveChildStorageKey(user.uid));
+        const nextActiveChild = nextChildren.find((child) => child.id === storedChildId) || nextChildren[0];
+        const nextBoard = nextActiveChild ? await loadCloudBoard(user.uid, nextActiveChild.id) : defaultBoard;
+        setAuthUser(user);
+        setChildren(nextChildren);
+        setActiveChildId(nextActiveChild?.id || "");
+        setBoard(nextBoard);
+        setActiveCategoryId(nextBoard.categories[0]?.id);
+        setPhrase([]);
+      } else {
+        setAuthUser(null);
+        setChildren([]);
+        setActiveChildId("");
+        setBoard(defaultBoard);
+        setActiveCategoryId(defaultBoard.categories[0]?.id);
+        setPhrase([]);
+      }
+      window.clearTimeout(loadingFallback);
+      setAuthLoading(false);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!authUser || !activeChildId) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(board));
+      localStorage.setItem(getBoardStorageKey(authUser.uid, activeChildId), JSON.stringify(board));
     } catch {
       alert("El navegador no pudo guardar el tablero. Prueba con grabaciones más cortas o exporta tu tablero.");
     }
-  }, [board]);
+
+    if (!db) return;
+    const timeout = window.setTimeout(async () => {
+      try {
+        await setDoc(doc(db, "users", authUser.uid, "boards", activeChildId), {
+          board,
+          childId: activeChildId,
+          updatedAt: serverTimestamp(),
+        });
+        setCloudStatus("Guardado en la nube");
+      } catch {
+        setCloudStatus("Guardado localmente");
+      }
+    }, 600);
+
+    return () => window.clearTimeout(timeout);
+  }, [authUser, activeChildId, board]);
+
+  useEffect(() => {
+    if (!authUser) return;
+    localStorage.setItem(getChildrenStorageKey(authUser.uid), JSON.stringify(children));
+  }, [authUser, children]);
 
   useEffect(() => {
     const loadVoices = () => setVoices(window.speechSynthesis?.getVoices?.() || []);
@@ -549,15 +714,164 @@ function App() {
     event.target.value = "";
   }
 
+  function getAuthErrorMessage(error) {
+    const messages = {
+      "auth/email-already-in-use": "Ese correo ya tiene cuenta. Prueba iniciar sesión.",
+      "auth/invalid-email": "Revisa que el correo esté bien escrito.",
+      "auth/invalid-credential": "Correo o contraseña incorrectos.",
+      "auth/operation-not-allowed": "Falta habilitar correo/contraseña en Firebase Authentication.",
+      "auth/weak-password": "La contraseña debe tener al menos 6 caracteres.",
+      "auth/wrong-password": "Contraseña incorrecta.",
+    };
+    return messages[error.code] || "No se pudo iniciar sesión. Revisa la configuración de Firebase.";
+  }
+
+  async function signInWithGoogle() {
+    if (!auth) return;
+    setAuthError("");
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      const shouldRedirect = ["auth/popup-blocked", "auth/popup-closed-by-user", "auth/cancelled-popup-request"].includes(error.code);
+      if (shouldRedirect) {
+        await signInWithRedirect(auth, googleProvider);
+        return;
+      }
+      setAuthError(getAuthErrorMessage(error));
+    }
+  }
+
+  async function signInWithEmail({ email, password }) {
+    if (!auth) return;
+    setAuthError("");
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (error) {
+      setAuthError(getAuthErrorMessage(error));
+    }
+  }
+
+  async function signUpWithEmail({ name, email, password }) {
+    if (!auth) return;
+    setAuthError("");
+    try {
+      const credential = await createUserWithEmailAndPassword(auth, email, password);
+      if (name.trim()) await updateProfile(credential.user, { displayName: name.trim() });
+      setAuthUser({ ...credential.user, displayName: name.trim() || credential.user.displayName });
+    } catch (error) {
+      setAuthError(getAuthErrorMessage(error));
+    }
+  }
+
+  async function logOut() {
+    if (!auth) return;
+    await signOut(auth);
+    setAuthUser(null);
+    setChildren([]);
+    setActiveChildId("");
+    setBoard(defaultBoard);
+    setActiveCategoryId(defaultBoard.categories[0]?.id);
+    setPhrase([]);
+  }
+
+  async function selectChild(childId) {
+    if (!authUser || childId === activeChildId) return;
+    const nextBoard = await loadCloudBoard(authUser.uid, childId);
+    localStorage.setItem(getActiveChildStorageKey(authUser.uid), childId);
+    setActiveChildId(childId);
+    setBoard(nextBoard);
+    setActiveCategoryId(nextBoard.categories[0]?.id);
+    setPhrase([]);
+  }
+
+  async function saveChild(child) {
+    const nextChild = createChildProfile(child);
+    setChildren((current) => {
+      const exists = current.some((item) => item.id === nextChild.id);
+      return exists ? current.map((item) => (item.id === nextChild.id ? nextChild : item)) : [...current, nextChild];
+    });
+    setActiveChildId(nextChild.id);
+    if (authUser) localStorage.setItem(getActiveChildStorageKey(authUser.uid), nextChild.id);
+    if (authUser && db) {
+      try {
+        await setDoc(doc(db, "users", authUser.uid, "children", nextChild.id), {
+          ...nextChild,
+          updatedAt: serverTimestamp(),
+        });
+        setCloudStatus("Perfil guardado en la nube");
+      } catch {
+        setCloudStatus("Perfil guardado localmente");
+      }
+    }
+    const nextBoard = await loadCloudBoard(authUser?.uid, nextChild.id);
+    setBoard(nextBoard);
+    setActiveCategoryId(nextBoard.categories[0]?.id);
+    setPhrase([]);
+    setEditingChild(null);
+  }
+
+  if (authLoading) return <AuthShell title="Cargando Nunu" />;
+
+  if (!authUser) {
+    return (
+      <LoginScreen
+        error={authError}
+        isConfigured={isFirebaseConfigured}
+        onGoogle={signInWithGoogle}
+        onEmailSignIn={signInWithEmail}
+        onEmailSignUp={signUpWithEmail}
+      />
+    );
+  }
+
+  if (!children.length) {
+    return <ChildProfileScreen onSave={saveChild} onLogout={logOut} familyName={authUser.displayName || "tu familia"} />;
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="Categorías">
         <div className="brand">
-          <div className="brand-mark">Nu</div>
+          <div className="brand-logo">
+            <img src={logoNunuUrl} alt="" />
+          </div>
           <div>
             <h1>Nunu</h1>
             <p>Comunicador visual</p>
           </div>
+        </div>
+
+        <div className="user-panel">
+          <div>
+            <strong>{authUser.displayName || "Familia"}</strong>
+            <span>{authUser.email}</span>
+          </div>
+          <button className="icon-button" aria-label="Cerrar sesión" title="Cerrar sesión" onClick={logOut}>
+            <LogOut size={18} />
+          </button>
+        </div>
+
+        <div className="child-switcher" aria-label="Perfil activo">
+          <label>
+            Niño o niña
+            <select value={activeChildId} onChange={(event) => selectChild(event.target.value)}>
+              {children.map((child) => (
+                <option key={child.id} value={child.id}>
+                  {child.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="child-actions">
+            <button className="mini-button" aria-label="Editar perfil" title="Editar perfil" onClick={() => setEditingChild(activeChild)}>
+              <Pencil size={16} />
+            </button>
+            <button className="mini-button" aria-label="Agregar niño" title="Agregar niño" onClick={() => setEditingChild({})}>
+              <Plus size={16} />
+            </button>
+          </div>
+          {activeChild?.interests ? <p>{activeChild.interests}</p> : null}
+          {cloudStatus ? <span className="cloud-status">{cloudStatus}</span> : null}
         </div>
 
         <nav className="category-list">
@@ -691,7 +1005,247 @@ function App() {
           onDeleteCategory={deleteCategory}
         />
       )}
+
+      {editingChild ? (
+        <ChildProfileModal child={editingChild.id ? editingChild : null} onClose={() => setEditingChild(null)} onSave={saveChild} />
+      ) : null}
     </main>
+  );
+}
+
+function AuthShell({ title, children }) {
+  return (
+    <main className="auth-shell">
+      <div className="crayon-stick crayon-yellow" />
+      <div className="crayon-stick crayon-blue" />
+      <div className="crayon-stick crayon-pink" />
+      <div className="crayon-stick crayon-green" />
+      <section className="auth-panel" aria-label={title}>
+        <div className="auth-rainbow" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+          <span />
+        </div>
+        <div className="brand auth-brand">
+          <div className="brand-logo auth-logo">
+            <img src={logoNunuUrl} alt="" />
+          </div>
+          <div>
+            <h1>{title}</h1>
+            <p>Comunicador visual familiar</p>
+          </div>
+        </div>
+        <div className="auth-color-dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+        </div>
+        {children}
+      </section>
+    </main>
+  );
+}
+
+function LoginScreen({ error, isConfigured, onGoogle, onEmailSignIn, onEmailSignUp }) {
+  const [mode, setMode] = useState("signIn");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const isSignUp = mode === "signUp";
+
+  function submit(event) {
+    event.preventDefault();
+    const payload = { name, email: email.trim(), password };
+    if (isSignUp) onEmailSignUp(payload);
+    else onEmailSignIn(payload);
+  }
+
+  return (
+    <AuthShell title="Entrar a Nunu">
+      <div className="login-copy">
+        <h2>Acceso familiar</h2>
+        <p>Cada familia tendrá su propio espacio para crear perfiles y tableros personalizados.</p>
+      </div>
+
+      {!isConfigured ? (
+        <p className="auth-warning">Falta agregar la configuración de Firebase en `.env.local`.</p>
+      ) : null}
+
+      <form className="login-form" onSubmit={submit}>
+        {isSignUp ? (
+          <label>
+            Nombre de familia
+            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ej. Familia López" autoComplete="name" />
+          </label>
+        ) : null}
+        <label>
+          Correo electrónico
+          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="familia@correo.com" autoComplete="email" required />
+        </label>
+        <label>
+          Contraseña
+          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo 6 caracteres" autoComplete={isSignUp ? "new-password" : "current-password"} required />
+        </label>
+        <button className="primary-button login-button" disabled={!isConfigured} type="submit">
+          {isSignUp ? "Crear cuenta" : "Entrar con correo"}
+        </button>
+        <button className="back-button auth-mode-button" type="button" onClick={() => setMode(isSignUp ? "signIn" : "signUp")}>
+          {isSignUp ? "Ya tengo cuenta" : "Crear cuenta con correo"}
+        </button>
+      </form>
+
+      <div className="login-divider"><span>o</span></div>
+
+      <div className="login-actions">
+        <button className="google-button" disabled={!isConfigured} onClick={onGoogle}>
+          <GoogleMark /> Entrar con Google
+        </button>
+      </div>
+
+      {error ? <p className="auth-error">{error}</p> : null}
+    </AuthShell>
+  );
+}
+
+function GoogleMark() {
+  return (
+    <svg className="google-mark" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+      <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.84z" />
+      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06L5.84 9.9C6.71 7.3 9.14 5.38 12 5.38z" />
+    </svg>
+  );
+}
+
+function ChildProfileScreen({ familyName, onSave, onLogout }) {
+  return (
+    <main className="onboarding-shell">
+      <section className="onboarding-panel">
+        <div className="brand onboarding-brand">
+          <div className="brand-logo auth-logo">
+            <img src={logoNunuUrl} alt="" />
+          </div>
+          <div>
+            <h1>Conozcamos a tu niño o niña</h1>
+            <p>{familyName}, este perfil ayuda a personalizar el comunicador desde el primer uso.</p>
+          </div>
+        </div>
+        <ChildProfileForm submitLabel="Crear perfil" onSave={onSave} />
+        <button className="back-button onboarding-logout" onClick={onLogout}>
+          <LogOut size={18} /> Cerrar sesión
+        </button>
+      </section>
+    </main>
+  );
+}
+
+function ChildProfileModal({ child, onClose, onSave }) {
+  return (
+    <Modal title={child ? "Editar perfil" : "Agregar niño o niña"} onClose={onClose}>
+      <ChildProfileForm
+        child={child}
+        submitLabel={child ? "Guardar perfil" : "Crear perfil"}
+        onSave={onSave}
+        onCancel={onClose}
+      />
+    </Modal>
+  );
+}
+
+function ChildProfileForm({ child, submitLabel, onSave, onCancel }) {
+  const [draft, setDraft] = useState({
+    id: child?.id || "",
+    name: child?.name || "",
+    age: child?.age || "",
+    communicationLevel: child?.communicationLevel || "Frases cortas",
+    interests: child?.interests || "",
+    comforts: child?.comforts || "",
+    sensitivities: child?.sensitivities || "",
+    dislikes: child?.dislikes || "",
+    routines: child?.routines || "",
+    notes: child?.notes || "",
+    createdAt: child?.createdAt,
+  });
+
+  function updateField(field, value) {
+    setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function submit(event) {
+    event.preventDefault();
+    if (!draft.name.trim()) return;
+    onSave(draft);
+  }
+
+  return (
+    <form className="child-profile-form" onSubmit={submit}>
+      <div className="profile-grid">
+        <label>
+          Nombre
+          <input value={draft.name} onChange={(event) => updateField("name", event.target.value)} placeholder="Ej. Emi" required />
+        </label>
+        <label>
+          Edad
+          <input value={draft.age} onChange={(event) => updateField("age", event.target.value)} placeholder="Ej. 6" inputMode="numeric" />
+        </label>
+      </div>
+
+      <label>
+        Nivel de comunicación
+        <select value={draft.communicationLevel} onChange={(event) => updateField("communicationLevel", event.target.value)}>
+          <option>Primeras palabras</option>
+          <option>Frases cortas</option>
+          <option>Usa pictogramas</option>
+          <option>Se comunica con gestos</option>
+          <option>Necesita apoyo constante</option>
+        </select>
+      </label>
+
+      <label>
+        Gustos e intereses
+        <textarea value={draft.interests} onChange={(event) => updateField("interests", event.target.value)} placeholder="Ej. dinosaurios, agua, trenes, música, burbujas" />
+      </label>
+
+      <label>
+        Cosas que le calman
+        <textarea value={draft.comforts} onChange={(event) => updateField("comforts", event.target.value)} placeholder="Ej. audífonos, abrazos firmes, luces bajas, su cobija" />
+      </label>
+
+      <label>
+        Sensibilidades
+        <textarea value={draft.sensitivities} onChange={(event) => updateField("sensitivities", event.target.value)} placeholder="Ej. ruidos fuertes, texturas, multitudes, cambios de rutina" />
+      </label>
+
+      <label>
+        Cosas que evita o no le gustan
+        <textarea value={draft.dislikes} onChange={(event) => updateField("dislikes", event.target.value)} placeholder="Ej. ciertos alimentos, lugares, sonidos o actividades" />
+      </label>
+
+      <label>
+        Rutinas importantes
+        <textarea value={draft.routines} onChange={(event) => updateField("routines", event.target.value)} placeholder="Ej. escuela, terapia, baño, comida, dormir" />
+      </label>
+
+      <label>
+        Notas para familia o terapeuta
+        <textarea value={draft.notes} onChange={(event) => updateField("notes", event.target.value)} placeholder="Algo importante para acompañarle mejor" />
+      </label>
+
+      <footer className="modal-actions profile-actions">
+        {onCancel ? (
+          <button className="secondary-button" type="button" onClick={onCancel}>
+            Cancelar
+          </button>
+        ) : null}
+        <button className="primary-button" type="submit">
+          <Check size={18} /> {submitLabel}
+        </button>
+      </footer>
+    </form>
   );
 }
 
