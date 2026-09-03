@@ -14,6 +14,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
 html {
@@ -1174,10 +1175,14 @@ input[type="checkbox"] {
     position: sticky;
     top: 0;
     z-index: 10;
-    gap: 14px;
+    gap: 12px;
+    max-height: 58dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 14px;
     border-right: 0;
     border-bottom: 1px solid #dde3ea;
+    box-shadow: 0 8px 24px rgba(31, 41, 51, 0.08);
   }
 
   .sidebar .brand {
@@ -1204,6 +1209,7 @@ input[type="checkbox"] {
     overflow-x: auto;
     padding-bottom: 2px;
     scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
   }
 
   .category-button {
@@ -1218,8 +1224,9 @@ input[type="checkbox"] {
 
   .phrase-bar {
     grid-template-columns: 1fr;
-    position: static;
-    padding-top: 0;
+    position: sticky;
+    top: 0;
+    padding: 8px 0 12px;
   }
 
   .phrase-output {
@@ -1262,6 +1269,10 @@ input[type="checkbox"] {
 }
 
 @media (max-width: 520px) {
+  body {
+    background: #f6f7fb;
+  }
+
   .onboarding-shell {
     align-items: start;
     padding: 10px;
@@ -1320,16 +1331,17 @@ input[type="checkbox"] {
   }
 
   .workspace {
-    padding-inline: 12px;
+    padding: 12px 12px 28px;
   }
 
   .sidebar {
     gap: 10px;
+    max-height: 52dvh;
     padding: 10px;
   }
 
   .sidebar .brand {
-    gap: 9px;
+    display: none;
   }
 
   .brand-mark {
@@ -1351,29 +1363,62 @@ input[type="checkbox"] {
   }
 
   .user-panel {
+    grid-template-columns: minmax(0, 1fr) 38px;
     padding: 8px;
   }
 
   .child-switcher {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 10px;
   }
 
   .child-actions {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    display: flex;
+    align-self: end;
   }
 
   .child-actions .mini-button {
-    width: 100%;
+    width: 38px;
   }
 
   .user-panel span {
     font-size: 0.78rem;
   }
 
+  .user-panel strong {
+    font-size: 0.88rem;
+  }
+
+  .child-switcher label {
+    gap: 5px;
+    font-size: 0.92rem;
+  }
+
+  .child-switcher select {
+    min-height: 44px;
+    padding: 0 38px 0 12px;
+    font-size: 1rem;
+  }
+
+  .child-switcher p,
+  .cloud-status {
+    grid-column: 1 / -1;
+    font-size: 0.78rem;
+  }
+
   .category-list {
-    grid-auto-columns: minmax(132px, 1fr);
+    grid-auto-columns: minmax(118px, 38vw);
     gap: 8px;
+    margin-inline: -2px;
+    padding-inline: 2px;
+  }
+
+  .category-button {
+    min-height: 42px;
+    padding: 8px 10px;
+    font-size: 0.94rem;
+    line-height: 1.15;
   }
 
   .category-button,
@@ -1387,12 +1432,29 @@ input[type="checkbox"] {
 
   .content-header {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 10px;
+    align-items: end;
+    margin-bottom: 12px;
+  }
+
+  .content-header .primary-button {
+    min-width: 0;
+    min-height: 42px;
+    padding-inline: 12px;
+    font-size: 0.9rem;
   }
 
   .content-header h2 {
-    font-size: 1.65rem;
+    font-size: 1.5rem;
+    line-height: 1.08;
+  }
+
+  .back-button {
+    min-height: 30px;
+    padding-inline: 0;
+    justify-content: flex-start;
+    font-size: 0.86rem;
   }
 
   .phrase-actions {
@@ -1401,7 +1463,8 @@ input[type="checkbox"] {
   }
 
   .phrase-output {
-    min-height: 54px;
+    min-height: 50px;
+    padding: 8px;
   }
 
   .phrase-output button {
@@ -1412,31 +1475,35 @@ input[type="checkbox"] {
   .tile-grid.large,
   .tile-grid.compact {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
+    gap: 9px;
   }
 
   .comm-tile,
   .tile-play {
-    min-height: 176px;
+    min-height: 154px;
   }
 
   .tile-play {
-    grid-template-rows: 96px auto;
+    grid-template-rows: minmax(82px, 1fr) auto;
     padding: 8px;
+    gap: 8px;
   }
 
   .tile-tools {
+    gap: 4px;
     top: 8px;
     right: 8px;
   }
 
   .mini-button {
-    width: 34px;
-    height: 34px;
+    width: 32px;
+    height: 32px;
   }
 
   .comm-tile strong {
-    font-size: 1.05rem;
+    min-height: 32px;
+    font-size: 0.98rem;
+    line-height: 1.08;
   }
 
   .image-tool-tabs {
@@ -1496,17 +1563,25 @@ input[type="checkbox"] {
     height: 100px;
   }
 
-  .tile-grid.large,
-  .tile-grid.compact {
-    grid-template-columns: 1fr;
-  }
-
   .comm-tile,
   .tile-play {
-    min-height: 168px;
+    min-height: 144px;
   }
 
   .tile-play {
-    grid-template-rows: 94px auto;
+    grid-template-rows: minmax(74px, 1fr) auto;
+    padding: 7px;
+  }
+
+  .category-list {
+    grid-auto-columns: minmax(104px, 42vw);
+  }
+
+  .category-button {
+    font-size: 0.86rem;
+  }
+
+  .comm-tile strong {
+    font-size: 0.9rem;
   }
 }
