@@ -1519,22 +1519,22 @@ input[type="checkbox"] {
 
   .tile-grid.large,
   .tile-grid.compact {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px;
     padding-bottom: env(safe-area-inset-bottom);
   }
 
   .comm-tile {
     min-height: 0;
-    aspect-ratio: 0.88;
+    aspect-ratio: 1;
   }
 
   .tile-play {
     min-height: 0;
     grid-template-rows: minmax(0, 1fr) auto;
     height: 100%;
-    padding: 7px;
-    gap: 6px;
+    padding: 6px;
+    gap: 5px;
   }
 
   .tile-image {
@@ -1542,14 +1542,14 @@ input[type="checkbox"] {
   }
 
   .tile-tools {
-    gap: 3px;
-    top: 6px;
-    right: 6px;
+    gap: 2px;
+    top: 5px;
+    right: 5px;
   }
 
   .mini-button {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
   }
 
   .child-actions .mini-button {
@@ -1563,8 +1563,8 @@ input[type="checkbox"] {
   }
 
   .comm-tile strong {
-    min-height: 24px;
-    font-size: 0.78rem;
+    min-height: 20px;
+    font-size: 0.68rem;
     line-height: 1.08;
   }
 
@@ -1626,11 +1626,11 @@ input[type="checkbox"] {
   }
 
   .comm-tile {
-    aspect-ratio: 0.76;
+    aspect-ratio: 1;
   }
 
   .tile-play {
-    padding: 7px;
+    padding: 5px;
   }
 
   .category-list {
@@ -1642,6 +1642,6 @@ input[type="checkbox"] {
   }
 
   .comm-tile strong {
-    font-size: 0.9rem;
+    font-size: 0.64rem;
   }
 }
