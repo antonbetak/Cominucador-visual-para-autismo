@@ -1268,7 +1268,7 @@ input[type="checkbox"] {
   }
 }
 
-@media (max-width: 520px) {
+@media (max-width: 640px) {
   body {
     background: #f6f7fb;
   }
@@ -1331,15 +1331,18 @@ input[type="checkbox"] {
   }
 
   .workspace {
-    padding: 12px 12px calc(92px + env(safe-area-inset-bottom));
+    min-height: auto;
+    padding: 10px 10px calc(92px + env(safe-area-inset-bottom));
   }
 
   .sidebar {
-    gap: 10px;
+    gap: 8px;
     position: static;
     max-height: none;
     overflow: visible;
-    padding: 10px;
+    padding: 8px;
+    background: #f8fbfd;
+    box-shadow: none;
   }
 
   .sidebar .brand {
@@ -1365,14 +1368,15 @@ input[type="checkbox"] {
   }
 
   .user-panel {
-    grid-template-columns: minmax(0, 1fr) 38px;
-    padding: 8px;
+    grid-template-columns: minmax(0, 1fr) 34px;
+    min-height: 42px;
+    padding: 6px 8px;
   }
 
   .child-switcher {
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 8px;
-    padding: 10px;
+    gap: 6px;
+    padding: 8px;
   }
 
   .child-actions {
@@ -1381,48 +1385,62 @@ input[type="checkbox"] {
   }
 
   .child-actions .mini-button {
-    width: 38px;
+    width: 34px;
+    height: 34px;
   }
 
   .user-panel span {
-    font-size: 0.78rem;
+    font-size: 0.7rem;
   }
 
   .user-panel strong {
-    font-size: 0.88rem;
+    font-size: 0.78rem;
   }
 
   .child-switcher label {
     gap: 5px;
-    font-size: 0.92rem;
+    color: #526170;
+    font-size: 0.76rem;
   }
 
   .child-switcher select {
-    min-height: 44px;
-    padding: 0 38px 0 12px;
-    font-size: 1.02rem;
+    min-height: 38px;
+    padding: 0 34px 0 10px;
+    background-position: calc(100% - 17px) 15px, calc(100% - 12px) 15px;
+    font-size: 0.95rem;
   }
 
   .child-switcher p,
   .cloud-status {
     grid-column: 1 / -1;
-    font-size: 0.78rem;
+    overflow: hidden;
+    font-size: 0.72rem;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .category-list {
-    grid-auto-columns: minmax(118px, 40vw);
-    gap: 8px;
+    grid-auto-columns: max-content;
+    gap: 6px;
     margin-inline: -2px;
-    padding: 0 2px 4px;
+    padding: 0 2px 3px;
     overflow-y: visible;
   }
 
   .category-button {
-    min-height: 58px;
-    padding: 8px 10px;
-    font-size: 0.94rem;
-    line-height: 1.15;
-    white-space: normal;
+    width: auto;
+    min-height: 34px;
+    padding: 0 10px;
+    font-size: 0.75rem;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .category-swatch {
+    width: 13px;
+    height: 13px;
+    border-radius: 4px;
   }
 
   .category-button,
@@ -1435,79 +1453,88 @@ input[type="checkbox"] {
   }
 
   .sidebar-actions .secondary-button {
-    min-height: 40px;
-    font-size: 0.9rem;
+    min-height: 34px;
+    font-size: 0.78rem;
   }
 
   .content-header {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 10px;
+    gap: 8px;
     align-items: end;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
   }
 
   .content-header .primary-button {
     min-width: 0;
-    min-height: 42px;
-    padding-inline: 12px;
-    font-size: 0.9rem;
+    min-height: 36px;
+    padding-inline: 10px;
+    font-size: 0.8rem;
   }
 
   .content-header h2 {
-    font-size: 1.5rem;
+    margin-top: 2px;
+    font-size: 1.28rem;
     line-height: 1.08;
   }
 
   .back-button {
-    min-height: 30px;
+    min-height: 26px;
     padding-inline: 0;
     justify-content: flex-start;
-    font-size: 0.86rem;
+    font-size: 0.76rem;
+  }
+
+  .phrase-bar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 4px 0 10px;
   }
 
   .phrase-actions {
     display: flex;
-    justify-content: flex-start;
+    gap: 6px;
   }
 
   .phrase-actions > * {
-    flex: 0 0 44px;
+    flex: 0 0 34px;
   }
 
   .phrase-output {
-    min-height: 50px;
-    padding: 8px;
+    min-height: 40px;
+    padding: 6px;
+    border-width: 1px;
   }
 
   .phrase-output button {
-    min-width: 70px;
-    min-height: 38px;
-    padding-inline: 12px;
+    min-width: 56px;
+    min-height: 28px;
+    padding-inline: 9px;
+    font-size: 0.76rem;
   }
 
   .phrase-output span {
-    font-size: 0.9rem;
+    font-size: 0.76rem;
   }
 
   .tile-grid.large,
   .tile-grid.compact {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 9px;
+    gap: 8px;
     padding-bottom: env(safe-area-inset-bottom);
   }
 
   .comm-tile {
     min-height: 0;
-    aspect-ratio: 0.78;
+    aspect-ratio: 0.88;
   }
 
   .tile-play {
     min-height: 0;
     grid-template-rows: minmax(0, 1fr) auto;
     height: 100%;
-    padding: 8px;
-    gap: 8px;
+    padding: 7px;
+    gap: 6px;
   }
 
   .tile-image {
@@ -1515,19 +1542,29 @@ input[type="checkbox"] {
   }
 
   .tile-tools {
-    gap: 4px;
-    top: 8px;
-    right: 8px;
+    gap: 3px;
+    top: 6px;
+    right: 6px;
   }
 
   .mini-button {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
+  }
+
+  .child-actions .mini-button {
+    width: 34px;
+    height: 34px;
+  }
+
+  .phrase-actions .icon-button {
+    width: 34px;
+    height: 34px;
   }
 
   .comm-tile strong {
-    min-height: 32px;
-    font-size: 0.98rem;
+    min-height: 24px;
+    font-size: 0.78rem;
     line-height: 1.08;
   }
 
