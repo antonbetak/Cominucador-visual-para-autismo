@@ -207,6 +207,20 @@ function splitProfileItems(value) {
 
 const personalizedCategoryIds = ["gustos", "calma", "evitar", "rutinas"];
 
+function getCategorySignature(categories) {
+  return categories.map((category) => ({
+    id: category.id,
+    name: category.name,
+    color: category.color,
+    tiles: category.tiles.map((item) => ({
+      label: item.label,
+      phrase: item.phrase,
+      color: item.color,
+      image: item.image,
+    })),
+  }));
+}
+
 function getPersonalizedCategories(child) {
   const interests = splitProfileItems(child.interests);
   const comforts = splitProfileItems(child.comforts);
@@ -254,7 +268,7 @@ function getPersonalizedCategories(child) {
 }
 
 function buildPersonalizedBoard(child) {
-  const categories = [...defaultBoard.categories, ...getPersonalizedCategories(child)];
+  const categories = [...getPersonalizedCategories(child), ...defaultBoard.categories];
 
   return {
     ...defaultBoard,
@@ -270,14 +284,20 @@ function mergePersonalizedBoard(board, child) {
   return {
     ...board,
     categories: [
-      ...board.categories.filter((category) => !personalizedCategoryIds.includes(category.id)),
       ...getPersonalizedCategories(child),
+      ...board.categories.filter((category) => !personalizedCategoryIds.includes(category.id)),
     ],
     settings: {
       ...board.settings,
       largeTiles: child.communicationLevel === "Primeras palabras" || child.communicationLevel === "Necesita apoyo constante",
     },
   };
+}
+
+function isPersonalizedBoardCurrent(board, child) {
+  const current = board.categories.filter((category) => personalizedCategoryIds.includes(category.id));
+  const next = getPersonalizedCategories(child);
+  return JSON.stringify(getCategorySignature(current)) === JSON.stringify(getCategorySignature(next));
 }
 
 function getSupportedAudioMimeType() {
@@ -690,6 +710,27 @@ function App() {
     if (!authUser) return;
     localStorage.setItem(getChildrenStorageKey(authUser.uid), JSON.stringify(children));
   }, [authUser, children]);
+
+  useEffect(() => {
+    if (!authUser || !activeChild) return;
+    const generatedCategories = getPersonalizedCategories(activeChild);
+    if (generatedCategories.length) {
+      setActiveCategoryId((current) => (personalizedCategoryIds.includes(current) ? current : generatedCategories[0].id));
+    }
+    setBoard((current) => {
+      if (isPersonalizedBoardCurrent(current, activeChild)) return current;
+      return mergePersonalizedBoard(current, activeChild);
+    });
+  }, [
+    authUser,
+    activeChild?.communicationLevel,
+    activeChild?.comforts,
+    activeChild?.dislikes,
+    activeChild?.interests,
+    activeChild?.routines,
+    activeChild?.sensitivities,
+    activeChildId,
+  ]);
 
   useEffect(() => {
     const loadVoices = () => setVoices(window.speechSynthesis?.getVoices?.() || []);
