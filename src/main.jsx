@@ -40,6 +40,7 @@ import logoNunuUrl from "../logo_nunu.jpeg";
 const STORAGE_KEY = "nunu-comunicador-v1";
 const CHILDREN_STORAGE_KEY = "nunu-comunicador-children-v1";
 const ACTIVE_CHILD_STORAGE_KEY = "nunu-comunicador-active-child-v1";
+const AUTO_IMAGE_CACHE_KEY = "nunu-comunicador-auto-images-v1";
 
 const colorOptions = [
   "#F9E66B",
@@ -216,7 +217,6 @@ function getCategorySignature(categories) {
       label: item.label,
       phrase: item.phrase,
       color: item.color,
-      image: item.image,
     })),
   }));
 }
@@ -387,6 +387,13 @@ function getConceptKey(value) {
   if (/feliz|content|alegr/.test(normalized)) return "happy";
   if (/triste|llorar|llanto/.test(normalized)) return "sad";
   if (/mama|madre|pap[aá]|papa|familia/.test(normalized)) return "family";
+  if (/dinosaur|dino|trex|t rex/.test(normalized)) return "dinosaur";
+  if (/musica|cancion|cantar|sonido|tambor|piano|guitarra/.test(normalized)) return "music";
+  if (/tren|metro|ferrocarril/.test(normalized)) return "train";
+  if (/burbuja|burbujas/.test(normalized)) return "bubbles";
+  if (/audifono|auricular|casco|orejera/.test(normalized)) return "headphones";
+  if (/escuela|colegio|clase/.test(normalized)) return "school";
+  if (/terapia|terapeuta/.test(normalized)) return "therapy";
   if (/ayuda|help|auxilio/.test(normalized)) return "help";
   if (/jugar|juego|play|pelota/.test(normalized)) return "play";
   if (/dormir|descansar|sue[nñ]o|cansad/.test(normalized)) return "sleep";
@@ -437,6 +444,27 @@ function makeAnimatedSymbol(value, variant = 0) {
     ],
     family: [
       base(`<circle cx="190" cy="190" r="48" fill="${extra}" stroke="${ink}" stroke-width="12"/><circle cx="310" cy="190" r="48" fill="${accent}" stroke="${ink}" stroke-width="12"/><circle cx="250" cy="290" r="42" fill="#fff" stroke="${ink}" stroke-width="12"/><path d="M130 365c20-70 100-70 120 0M250 365c20-70 100-70 120 0M200 395c14-50 86-50 100 0" fill="none" stroke="${ink}" stroke-width="14" stroke-linecap="round"/><g><path d="M160 130c30-26 60-26 90 0" stroke="${accent}" stroke-width="10" stroke-linecap="round"/><path d="M250 130c30-26 60-26 90 0" stroke="${extra}" stroke-width="10" stroke-linecap="round"/><animateTransform attributeName="transform" type="translate" values="0 0;0 -8;0 0" dur="1.2s" repeatCount="indefinite"/></g>`),
+    ],
+    dinosaur: [
+      base(`<g><path d="M125 300c18-76 86-126 175-112 50 8 78 38 96 82l38 4c17 2 24 24 10 35l-32 25c-18 70-85 98-154 82l-56 30-10-52c-44-18-72-51-67-94z" fill="#77c86b" stroke="${ink}" stroke-width="13" stroke-linejoin="round"/><path d="M185 206l16-62 45 52 24-64 35 70" fill="${extra}" stroke="${ink}" stroke-width="11" stroke-linejoin="round"/><circle cx="338" cy="262" r="13" fill="${ink}"/><path d="M348 315c-28 20-66 20-92-3" fill="none" stroke="${ink}" stroke-width="13" stroke-linecap="round"/><path d="M206 405v45M300 414v36" stroke="${ink}" stroke-width="15" stroke-linecap="round"/><animateTransform attributeName="transform" type="translate" values="0 0;0 -8;0 0" dur="1.1s" repeatCount="indefinite"/></g>`),
+    ],
+    music: [
+      base(`<g><path d="M320 120v185c0 34-32 62-72 62s-72-28-72-62 32-62 72-62c18 0 34 6 46 15V150z" fill="${accent}" stroke="${ink}" stroke-width="14" stroke-linejoin="round"/><path d="M320 120l82 28v54l-82-28z" fill="${extra}" stroke="${ink}" stroke-width="14" stroke-linejoin="round"/><circle cx="248" cy="305" r="42" fill="#fff" opacity=".72"/><path d="M130 170c-28 34-28 88 0 122M380 250c28 34 28 88 0 122" fill="none" stroke="${extra}" stroke-width="18" stroke-linecap="round"><animate attributeName="opacity" values=".35;1;.35" dur="1s" repeatCount="indefinite"/></path><animateTransform attributeName="transform" type="rotate" values="-3 250 250;3 250 250;-3 250 250" dur="1.1s" repeatCount="indefinite"/></g>`),
+    ],
+    train: [
+      base(`<rect x="110" y="150" width="280" height="180" rx="32" fill="${accent}" stroke="${ink}" stroke-width="14"/><rect x="145" y="185" width="72" height="58" rx="10" fill="#fff"/><rect x="245" y="185" width="100" height="58" rx="10" fill="#fff"/><circle cx="175" cy="340" r="32" fill="${extra}" stroke="${ink}" stroke-width="12"/><circle cx="325" cy="340" r="32" fill="${extra}" stroke="${ink}" stroke-width="12"/><path d="M105 390h290" stroke="${ink}" stroke-width="16" stroke-linecap="round"/><animateTransform attributeName="transform" type="translate" values="-10 0;10 0;-10 0" dur="1s" repeatCount="indefinite"/></g>`),
+    ],
+    bubbles: [
+      base(`<g fill="#fff" stroke="${accent}" stroke-width="12"><circle cx="180" cy="285" r="62"><animate attributeName="cy" values="300;220;300" dur="1.6s" repeatCount="indefinite"/></circle><circle cx="295" cy="235" r="78"><animate attributeName="cy" values="255;165;255" dur="1.8s" repeatCount="indefinite"/></circle><circle cx="340" cy="340" r="42"><animate attributeName="cy" values="350;280;350" dur="1.4s" repeatCount="indefinite"/></circle><circle cx="205" cy="150" r="30"><animate attributeName="cy" values="180;120;180" dur="1.3s" repeatCount="indefinite"/></circle></g><path d="M190 270l-28 28M310 215l-40 40" stroke="${ink}" stroke-width="10" stroke-linecap="round" opacity=".55"/>`),
+    ],
+    headphones: [
+      base(`<path d="M145 270c0-82 48-145 105-145s105 63 105 145" fill="none" stroke="${ink}" stroke-width="18" stroke-linecap="round"/><rect x="105" y="245" width="78" height="110" rx="28" fill="${accent}" stroke="${ink}" stroke-width="13"/><rect x="317" y="245" width="78" height="110" rx="28" fill="${extra}" stroke="${ink}" stroke-width="13"/><path d="M195 380c36 28 74 28 110 0" fill="none" stroke="${ink}" stroke-width="14" stroke-linecap="round"/><g stroke="${accent}" stroke-width="13" stroke-linecap="round"><path d="M235 230l30 40 34-64"><animate attributeName="opacity" values=".35;1;.35" dur="1.2s" repeatCount="indefinite"/></path></g>`),
+    ],
+    school: [
+      base(`<path d="M95 220l155-95 155 95v175H95z" fill="#fff" stroke="${ink}" stroke-width="14" stroke-linejoin="round"/><path d="M95 220h310" stroke="${accent}" stroke-width="18" stroke-linecap="round"/><rect x="205" y="285" width="90" height="110" rx="10" fill="${extra}" stroke="${ink}" stroke-width="12"/><circle cx="250" cy="215" r="38" fill="${accent}" stroke="${ink}" stroke-width="11"/><path d="M180 125h140" stroke="${ink}" stroke-width="14" stroke-linecap="round"><animate attributeName="stroke-dasharray" values="20 140;140 20;20 140" dur="1.7s" repeatCount="indefinite"/></path>`),
+    ],
+    therapy: [
+      base(`<circle cx="188" cy="190" r="45" fill="${extra}" stroke="${ink}" stroke-width="12"/><circle cx="318" cy="190" r="45" fill="${accent}" stroke="${ink}" stroke-width="12"/><path d="M128 360c20-78 100-78 120 0M258 360c20-78 100-78 120 0" fill="none" stroke="${ink}" stroke-width="15" stroke-linecap="round"/><path d="M210 270c30 34 50 34 80 0" fill="none" stroke="#e75d72" stroke-width="22" stroke-linecap="round"/><path d="M246 250c-42-52 40-88 54-30 14-58 96-22 54 30-22 28-54 50-54 50s-32-22-54-50z" fill="#ffb7c3" stroke="${ink}" stroke-width="10"><animateTransform attributeName="transform" type="scale" values="1;1.07;1" dur="1s" repeatCount="indefinite"/></path>`),
     ],
     help: [
       base(`<circle cx="250" cy="220" r="66" fill="${extra}" stroke="${ink}" stroke-width="14"/><path d="M180 365c24-86 116-86 140 0" fill="none" stroke="${ink}" stroke-width="18" stroke-linecap="round"/><path d="M330 130l52-52M348 190h74M315 85l35-55" stroke="${accent}" stroke-width="18" stroke-linecap="round"><animate attributeName="opacity" values=".35;1;.35" dur=".9s" repeatCount="indefinite"/></path><path d="M250 200v65M250 305v2" stroke="${ink}" stroke-width="24" stroke-linecap="round"/>`),
@@ -565,6 +593,64 @@ async function searchArasaacImages(searchTerm) {
     .filter((pictogram) => pictogram?._id && !pictogram.violence && !pictogram.sex)
     .sort((a, b) => Number(Boolean(b.aac)) - Number(Boolean(a.aac)))
     .map((pictogram) => `https://static.arasaac.org/pictograms/${pictogram._id}/${pictogram._id}_500.png`);
+}
+
+function getAutoImageCache() {
+  try {
+    const stored = localStorage.getItem(AUTO_IMAGE_CACHE_KEY);
+    return stored ? JSON.parse(stored) : {};
+  } catch {
+    return {};
+  }
+}
+
+function setAutoImageCache(cache) {
+  try {
+    localStorage.setItem(AUTO_IMAGE_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // The generated symbol fallback still works if the browser refuses extra storage.
+  }
+}
+
+function getAutoImageCacheKey(value) {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+async function findAutomaticCardImage(label) {
+  const key = getAutoImageCacheKey(label);
+  if (!key) return "";
+  const cache = getAutoImageCache();
+  if (cache[key]) return cache[key];
+
+  const [arasaacImage] = await searchArasaacImages(label);
+  if (arasaacImage) {
+    setAutoImageCache({ ...cache, [key]: arasaacImage });
+    return arasaacImage;
+  }
+
+  return "";
+}
+
+async function applyAutomaticImagesToBoard(board) {
+  const categories = await Promise.all(
+    board.categories.map(async (category) => {
+      if (!personalizedCategoryIds.includes(category.id)) return category;
+      const tiles = await Promise.all(
+        category.tiles.map(async (item) => {
+          const currentImage = item.image || "";
+          if (currentImage.startsWith("http")) return item;
+          const automaticImage = await findAutomaticCardImage(item.label);
+          return automaticImage ? { ...item, image: automaticImage } : item;
+        }),
+      );
+      return { ...category, tiles };
+    }),
+  );
+  return { ...board, categories };
 }
 
 async function searchGiphyEndpoint(searchTerm, endpoint) {
@@ -782,6 +868,21 @@ function App() {
   ]);
 
   useEffect(() => {
+    if (!authUser || !activeChild) return;
+    let isCancelled = false;
+
+    async function improveGeneratedImages() {
+      const nextBoard = await applyAutomaticImagesToBoard(board);
+      if (!isCancelled && nextBoard !== board) setBoard(nextBoard);
+    }
+
+    improveGeneratedImages();
+    return () => {
+      isCancelled = true;
+    };
+  }, [authUser, activeChildId, board.categories.length]);
+
+  useEffect(() => {
     const loadVoices = () => setVoices(window.speechSynthesis?.getVoices?.() || []);
     loadVoices();
     window.speechSynthesis?.addEventListener?.("voiceschanged", loadVoices);
@@ -991,7 +1092,8 @@ function App() {
       }
     }
     const savedBoard = isNewChild ? null : await loadCloudBoard(authUser?.uid, nextChild.id);
-    const nextBoard = isNewChild ? buildPersonalizedBoard(nextChild) : mergePersonalizedBoard(savedBoard, nextChild);
+    const personalizedBoard = isNewChild ? buildPersonalizedBoard(nextChild) : mergePersonalizedBoard(savedBoard, nextChild);
+    const nextBoard = await applyAutomaticImagesToBoard(personalizedBoard);
     if (authUser) localStorage.setItem(getBoardStorageKey(authUser.uid, nextChild.id), JSON.stringify(nextBoard));
     if (authUser && db) {
       try {
