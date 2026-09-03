@@ -197,6 +197,67 @@ function createChildProfile(data) {
   };
 }
 
+function splitProfileItems(value) {
+  return value
+    .split(/[,;\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function buildPersonalizedBoard(child) {
+  const interests = splitProfileItems(child.interests);
+  const comforts = splitProfileItems(child.comforts);
+  const dislikes = splitProfileItems(`${child.sensitivities}\n${child.dislikes}`);
+  const routines = splitProfileItems(child.routines);
+  const categories = [...defaultBoard.categories];
+
+  if (interests.length) {
+    categories.push({
+      id: "gustos",
+      name: "Me gusta",
+      color: "#F9E66B",
+      tiles: interests.map((item) => tile(uid("tile"), item, `Quiero ${item}`, "#F9E66B", makeAnimatedSymbol(item))),
+    });
+  }
+
+  if (comforts.length) {
+    categories.push({
+      id: "calma",
+      name: "Me calma",
+      color: "#B7E4A6",
+      tiles: comforts.map((item) => tile(uid("tile"), item, `Quiero ${item}`, "#B7E4A6", makeAnimatedSymbol(item))),
+    });
+  }
+
+  if (dislikes.length) {
+    categories.push({
+      id: "evitar",
+      name: "No me gusta",
+      color: "#FFB7C3",
+      tiles: dislikes.map((item) => tile(uid("tile"), item, `No quiero ${item}`, "#FFB7C3", makeAnimatedSymbol(item))),
+    });
+  }
+
+  if (routines.length) {
+    categories.push({
+      id: "rutinas",
+      name: "Rutinas",
+      color: "#8ED6FF",
+      tiles: routines.map((item) => tile(uid("tile"), item, `Quiero ${item}`, "#8ED6FF", makeAnimatedSymbol(item))),
+    });
+  }
+
+  return {
+    ...defaultBoard,
+    categories,
+    settings: {
+      ...defaultBoard.settings,
+      largeTiles: child.communicationLevel === "Primeras palabras" || child.communicationLevel === "Necesita apoyo constante",
+    },
+  };
+}
+
 function getSupportedAudioMimeType() {
   if (!window.MediaRecorder) return "";
   const types = [
@@ -786,6 +847,7 @@ function App() {
 
   async function saveChild(child) {
     const nextChild = createChildProfile(child);
+    const isNewChild = !children.some((item) => item.id === nextChild.id);
     setChildren((current) => {
       const exists = current.some((item) => item.id === nextChild.id);
       return exists ? current.map((item) => (item.id === nextChild.id ? nextChild : item)) : [...current, nextChild];
@@ -803,7 +865,19 @@ function App() {
         setCloudStatus("Perfil guardado localmente");
       }
     }
-    const nextBoard = await loadCloudBoard(authUser?.uid, nextChild.id);
+    const nextBoard = isNewChild ? buildPersonalizedBoard(nextChild) : await loadCloudBoard(authUser?.uid, nextChild.id);
+    if (authUser) localStorage.setItem(getBoardStorageKey(authUser.uid, nextChild.id), JSON.stringify(nextBoard));
+    if (authUser && db && isNewChild) {
+      try {
+        await setDoc(doc(db, "users", authUser.uid, "boards", nextChild.id), {
+          board: nextBoard,
+          childId: nextChild.id,
+          updatedAt: serverTimestamp(),
+        });
+      } catch {
+        setCloudStatus("Tablero personalizado guardado localmente");
+      }
+    }
     setBoard(nextBoard);
     setActiveCategoryId(nextBoard.categories[0]?.id);
     setPhrase([]);
@@ -1131,7 +1205,7 @@ function ChildProfileScreen({ familyName, onSave, onLogout }) {
           </div>
           <div>
             <h1>Conozcamos a tu niño o niña</h1>
-            <p>{familyName}, este perfil ayuda a personalizar el comunicador desde el primer uso.</p>
+            <p>{familyName}, Nunu usará estas respuestas para crear tarjetas iniciales de gustos, calma, rutinas y cosas que evita.</p>
           </div>
         </div>
         <ChildProfileForm submitLabel="Crear perfil" onSave={onSave} />
