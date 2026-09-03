@@ -781,10 +781,13 @@ function App() {
       "auth/invalid-email": "Revisa que el correo esté bien escrito.",
       "auth/invalid-credential": "Correo o contraseña incorrectos.",
       "auth/operation-not-allowed": "Falta habilitar correo/contraseña en Firebase Authentication.",
+      "auth/popup-blocked": "El navegador bloqueó la ventana de Google. Permite popups o intenta de nuevo.",
+      "auth/popup-closed-by-user": "Se cerró la ventana antes de terminar el inicio de sesión.",
+      "auth/unauthorized-domain": "Falta autorizar este dominio en Firebase Authentication.",
       "auth/weak-password": "La contraseña debe tener al menos 6 caracteres.",
       "auth/wrong-password": "Contraseña incorrecta.",
     };
-    return messages[error.code] || "No se pudo iniciar sesión. Revisa la configuración de Firebase.";
+    return messages[error.code] || `No se pudo iniciar sesión. Firebase respondió: ${error.code || "error desconocido"}.`;
   }
 
   async function signInWithGoogle() {
