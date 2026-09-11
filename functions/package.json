@@ -1,0 +1,12 @@
+{
+  "name": "nunu-functions",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "engines": {
+    "node": "22"
+  },
+  "dependencies": {
+    "firebase-functions": "7.3.2"
+  }
+}

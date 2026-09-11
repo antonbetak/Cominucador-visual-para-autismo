@@ -4,3 +4,4 @@ dist
 .env
 .env.local
 firebase-debug.log
+functions/.secret.local

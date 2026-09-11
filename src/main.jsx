@@ -107,7 +107,7 @@ const defaultBoard = {
 };
 
 function tile(id, label, phrase, color, image) {
-  return { id, label, phrase, color, image, audio: "", createdAt: Date.now() };
+  return { id, label, phrase, color, image, audio: "", youtubeUrl: "", youtubeStart: "", youtubeEnd: "", createdAt: Date.now() };
 }
 
 function uid(prefix = "id") {
@@ -316,6 +316,71 @@ function playAudioSource(source) {
   audio.play().catch(() => {
     alert("No se pudo reproducir esta grabación en este navegador.");
   });
+}
+
+function parseTimeToSeconds(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  if (/^\d+$/.test(trimmed)) return Number(trimmed);
+  const parts = trimmed.split(":").map((part) => Number(part));
+  if (parts.some((part) => Number.isNaN(part))) return "";
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return "";
+}
+
+function formatSecondsInput(value) {
+  const seconds = parseTimeToSeconds(value);
+  return seconds === "" ? "" : String(seconds);
+}
+
+function getYouTubeVideoId(value) {
+  if (!value?.trim()) return "";
+  try {
+    const url = new URL(value.trim());
+    if (url.hostname.includes("youtu.be")) return url.pathname.split("/").filter(Boolean)[0] || "";
+    if (url.hostname.includes("youtube.com")) {
+      if (url.pathname.startsWith("/shorts/") || url.pathname.startsWith("/embed/")) return url.pathname.split("/").filter(Boolean)[1] || "";
+      return url.searchParams.get("v") || "";
+    }
+  } catch {
+    const match = value.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([a-zA-Z0-9_-]{6,})/);
+    return match?.[1] || "";
+  }
+  return "";
+}
+
+function getYouTubeThumbnail(value) {
+  const videoId = getYouTubeVideoId(value);
+  return videoId ? `https://img.youtube.com/vi/${videoId}/mqdefault.jpg` : "";
+}
+
+function getYouTubeEmbedUrl(tileItem, options = {}) {
+  const videoId = getYouTubeVideoId(tileItem.youtubeUrl);
+  if (!videoId) return "";
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const params = new URLSearchParams({
+    autoplay: options.autoplay === false ? "0" : "1",
+    mute: "1",
+    controls: options.controls === false ? "0" : "1",
+    disablekb: options.controls === false ? "1" : "0",
+    enablejsapi: "1",
+    fs: options.controls === false ? "0" : "1",
+    iv_load_policy: "3",
+    rel: "0",
+    modestbranding: "1",
+    playsinline: "1",
+  });
+  if (origin) params.set("origin", origin);
+  const start = parseTimeToSeconds(tileItem.youtubeStart);
+  const end = parseTimeToSeconds(tileItem.youtubeEnd);
+  if (start !== "") params.set("start", String(start));
+  if (end !== "" && (start === "" || end > start)) params.set("end", String(end));
+  if (options.loop && videoId) {
+    params.set("loop", "1");
+    params.set("playlist", videoId);
+  }
+  return `https://www.youtube-nocookie.com/embed/${videoId}?${params.toString()}`;
 }
 
 function normalizeImageInput(value) {
@@ -696,6 +761,37 @@ function TileImage({ src, fallbackSize = 48 }) {
 
   if (!src || failed) return <ImageIcon size={fallbackSize} />;
   return <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} />;
+}
+
+function InlineYouTubeVideo({ tileItem }) {
+  const frameRef = useRef(null);
+  const embedUrl = getYouTubeEmbedUrl(tileItem, { autoplay: true, controls: false, loop: true });
+
+  useEffect(() => {
+    if (!embedUrl) return undefined;
+    const sendCommand = (func) => {
+      frameRef.current?.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args: [] }), "*");
+    };
+    const interval = window.setInterval(() => {
+      sendCommand("mute");
+      sendCommand("playVideo");
+    }, 700);
+    window.setTimeout(() => window.clearInterval(interval), 5000);
+    return () => window.clearInterval(interval);
+  }, [embedUrl]);
+
+  if (!embedUrl) return <TileImage src={tileItem.image} />;
+
+  return (
+    <iframe
+      ref={frameRef}
+      className="inline-video-frame"
+      title={tileItem.label || "Video"}
+      src={embedUrl}
+      allow="autoplay; encrypted-media; picture-in-picture; web-share"
+      allowFullScreen
+    />
+  );
 }
 
 function App() {
@@ -1250,24 +1346,31 @@ function App() {
         </div>
 
         <div className={`tile-grid ${board.settings.largeTiles ? "large" : "compact"}`}>
-          {activeCategory?.tiles.map((item) => (
-            <article className="comm-tile" key={item.id} style={{ "--tile-color": item.color }}>
-              <button className="tile-play" onClick={() => playTile(item)}>
-                <span className="tile-image">
-                  <TileImage src={item.image} />
-                </span>
-                <strong>{item.label}</strong>
-              </button>
-              <div className="tile-tools">
-                <button className="mini-button" aria-label={`Editar ${item.label}`} title="Editar" onClick={() => setEditingTile({ categoryId: activeCategory.id, tile: item })}>
-                  <Pencil size={16} />
+          {activeCategory?.tiles.map((item) => {
+            const youtubeEmbedUrl = getYouTubeEmbedUrl(item, { autoplay: true, controls: false, loop: true });
+            return (
+              <article className="comm-tile" key={item.id} style={{ "--tile-color": item.color }}>
+                <button className="tile-play" onClick={() => playTile(item)}>
+                  <span className="tile-image">
+                    {youtubeEmbedUrl ? (
+                      <InlineYouTubeVideo tileItem={item} />
+                    ) : (
+                      <TileImage src={item.image} />
+                    )}
+                  </span>
+                  <strong>{item.label}</strong>
                 </button>
-                <button className="mini-button" aria-label={`Escuchar ${item.label}`} title="Escuchar" onClick={() => (item.audio ? playAudioSource(item.audio) : speak(item.phrase || item.label))}>
-                  <Play size={16} />
-                </button>
-              </div>
-            </article>
-          ))}
+                <div className="tile-tools">
+                  <button className="mini-button" aria-label={`Editar ${item.label}`} title="Editar" onClick={() => setEditingTile({ categoryId: activeCategory.id, tile: item })}>
+                    <Pencil size={16} />
+                  </button>
+                  <button className="mini-button" aria-label={`Escuchar ${item.label}`} title="Escuchar" onClick={() => (item.audio ? playAudioSource(item.audio) : speak(item.phrase || item.label))}>
+                    <Play size={16} />
+                  </button>
+                </div>
+              </article>
+            );
+          })}
         </div>
       </section>
 
@@ -1315,6 +1418,7 @@ function App() {
       {editingChild ? (
         <ChildProfileModal child={editingChild.id ? editingChild : null} onClose={() => setEditingChild(null)} onSave={saveChild} />
       ) : null}
+
     </main>
   );
 }
@@ -1594,6 +1698,8 @@ function TileEditor({ categoryId, tileItem, onClose, onSave, onDelete }) {
   const [searchStatus, setSearchStatus] = useState("Sin resultados todavía");
   const [uploadStatus, setUploadStatus] = useState("");
   const imageUrlHint = getImageUrlHint(draft.image);
+  const youtubeVideoId = getYouTubeVideoId(draft.youtubeUrl || "");
+  const youtubePreviewUrl = getYouTubeEmbedUrl(draft, { autoplay: false });
 
   useEffect(() => {
     if (kidFriendly && mediaType === "gif") setMediaType("animated");
@@ -1605,6 +1711,13 @@ function TileEditor({ categoryId, tileItem, onClose, onSave, onDelete }) {
 
   function updateImageValue(value) {
     updateField("image", normalizeImageInput(value));
+  }
+
+  function updateYoutubeUrl(value) {
+    setDraft((current) => {
+      const nextImage = current.image || getYouTubeThumbnail(value);
+      return { ...current, youtubeUrl: value, image: nextImage };
+    });
   }
 
   async function searchImages() {
@@ -1709,6 +1822,9 @@ function TileEditor({ categoryId, tileItem, onClose, onSave, onDelete }) {
             <button className={imageTool === "url" ? "active" : ""} onClick={() => setImageTool("url")}>
               <Link size={18} /> URL
             </button>
+            <button className={imageTool === "youtube" ? "active" : ""} onClick={() => setImageTool("youtube")}>
+              <Play size={18} /> YouTube
+            </button>
           </div>
 
           {imageTool === "search" ? (
@@ -1759,6 +1875,33 @@ function TileEditor({ categoryId, tileItem, onClose, onSave, onDelete }) {
               {imageUrlHint ? <span className="field-hint warning">{imageUrlHint}</span> : null}
             </label>
           ) : null}
+
+          {imageTool === "youtube" ? (
+            <div className="youtube-panel">
+              <label>
+                URL de YouTube
+                <input value={draft.youtubeUrl || ""} onChange={(event) => updateYoutubeUrl(event.target.value)} placeholder="https://youtube.com/watch?v=..." />
+              </label>
+              <div className="time-range-grid">
+                <label>
+                  Inicio
+                  <input value={draft.youtubeStart || ""} onChange={(event) => updateField("youtubeStart", event.target.value)} placeholder="0:15" inputMode="numeric" />
+                </label>
+                <label>
+                  Fin
+                  <input value={draft.youtubeEnd || ""} onChange={(event) => updateField("youtubeEnd", event.target.value)} placeholder="0:35" inputMode="numeric" />
+                </label>
+              </div>
+              <span className="field-hint">Puedes escribir segundos o formato minuto:segundo, por ejemplo 75 o 1:15.</span>
+              {youtubeVideoId ? (
+                <div className="youtube-preview">
+                  <iframe title="Vista previa de YouTube" src={youtubePreviewUrl} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen />
+                </div>
+              ) : (
+                <span className="field-hint warning">Pega una URL válida de YouTube para activar el video en la tarjeta.</span>
+              )}
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -1766,10 +1909,26 @@ function TileEditor({ categoryId, tileItem, onClose, onSave, onDelete }) {
         <button className="danger-button" onClick={() => { onDelete(categoryId, draft.id); onClose(); }}>
           <Trash2 size={18} /> Eliminar
         </button>
-        <button className="primary-button" onClick={() => onSave(categoryId, { ...draft, label: draft.label.trim() || "Sin texto", phrase: draft.phrase.trim() || draft.label.trim() })}>
+        <button className="primary-button" onClick={() => onSave(categoryId, { ...draft, label: draft.label.trim() || (draft.youtubeUrl ? "Video" : "Sin texto"), phrase: draft.phrase.trim() || draft.label.trim() || (draft.youtubeUrl ? "Video" : "Sin texto"), youtubeStart: formatSecondsInput(draft.youtubeStart), youtubeEnd: formatSecondsInput(draft.youtubeEnd), image: draft.image || getYouTubeThumbnail(draft.youtubeUrl || "") })}>
           <Save size={18} /> Guardar
         </button>
       </footer>
+    </Modal>
+  );
+}
+
+function VideoPlayerModal({ tileItem, onClose }) {
+  const embedUrl = getYouTubeEmbedUrl(tileItem, { autoplay: true, controls: true });
+
+  return (
+    <Modal title={tileItem.label || "Video"} onClose={onClose} className="video-modal">
+      <div className="video-player">
+        {embedUrl ? (
+          <iframe title={tileItem.label || "Video de YouTube"} src={embedUrl} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen />
+        ) : (
+          <p>No se pudo abrir este video.</p>
+        )}
+      </div>
     </Modal>
   );
 }
@@ -2025,10 +2184,10 @@ function SettingsModal({ board, onClose, onSettings, onExport, onImport, onReset
   );
 }
 
-function Modal({ title, children, onClose }) {
+function Modal({ title, children, onClose, className = "" }) {
   return (
     <div className="modal-backdrop" role="presentation">
-      <section className="modal-panel" role="dialog" aria-modal="true" aria-label={title}>
+      <section className={`modal-panel ${className}`} role="dialog" aria-modal="true" aria-label={title}>
         <header className="modal-header">
           <h3>{title}</h3>
           <button className="icon-button" aria-label="Cerrar" onClick={onClose}>
