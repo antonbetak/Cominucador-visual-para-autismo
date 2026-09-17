@@ -41,6 +41,7 @@ const STORAGE_KEY = "nunu-comunicador-v1";
 const CHILDREN_STORAGE_KEY = "nunu-comunicador-children-v1";
 const ACTIVE_CHILD_STORAGE_KEY = "nunu-comunicador-active-child-v1";
 const AUTO_IMAGE_CACHE_KEY = "nunu-comunicador-auto-images-v1";
+const MAX_PHRASE_ITEMS = 8;
 
 const colorOptions = [
   "#F9E66B",
@@ -804,12 +805,30 @@ function App() {
   const [editingTile, setEditingTile] = useState(null);
   const [editingCategory, setEditingCategory] = useState(null);
   const [isManageOpen, setIsManageOpen] = useState(false);
+  const [poppingTileId, setPoppingTileId] = useState(null);
+  const [activeFeedback, setActiveFeedback] = useState(null);
+  const [phraseLimitKey, setPhraseLimitKey] = useState(0);
   const [children, setChildren] = useState([]);
   const [activeChildId, setActiveChildId] = useState("");
   const [editingChild, setEditingChild] = useState(null);
   const [cloudStatus, setCloudStatus] = useState("");
   const [voices, setVoices] = useState([]);
   const cloudBootstrapKey = useRef("");
+  const phraseItemsRef = useRef([]);
+  const tilePopTimeoutRef = useRef(null);
+  const feedbackHideTimeoutRef = useRef(null);
+  const feedbackRemoveTimeoutRef = useRef(null);
+  const feedbackSequenceRef = useRef(0);
+
+  useEffect(() => () => {
+    window.clearTimeout(tilePopTimeoutRef.current);
+    window.clearTimeout(feedbackHideTimeoutRef.current);
+    window.clearTimeout(feedbackRemoveTimeoutRef.current);
+  }, []);
+
+  useEffect(() => {
+    phraseItemsRef.current = phrase;
+  }, [phrase]);
 
   const activeCategory = board.categories.find((category) => category.id === activeCategoryId) || board.categories[0];
   const activeChild = children.find((child) => child.id === activeChildId);
@@ -1000,12 +1019,50 @@ function App() {
   }
 
   function playTile(tileItem) {
-    setPhrase((current) => [...current, tileItem]);
+    if (phraseItemsRef.current.length >= MAX_PHRASE_ITEMS) {
+      setPhraseLimitKey((current) => current + 1);
+    } else {
+      const nextPhrase = [...phraseItemsRef.current, tileItem];
+      phraseItemsRef.current = nextPhrase;
+      setPhrase(nextPhrase);
+    }
     if (tileItem.audio) {
       playAudioSource(tileItem.audio);
       return;
     }
     speak(tileItem.phrase || tileItem.label);
+  }
+
+  function handleTilePress(tileItem) {
+    playTile(tileItem);
+    window.clearTimeout(tilePopTimeoutRef.current);
+    setPoppingTileId(null);
+    window.requestAnimationFrame(() => setPoppingTileId(tileItem.id));
+    tilePopTimeoutRef.current = window.setTimeout(() => setPoppingTileId(null), 620);
+
+    window.clearTimeout(feedbackHideTimeoutRef.current);
+    window.clearTimeout(feedbackRemoveTimeoutRef.current);
+    const feedbackKey = feedbackSequenceRef.current + 1;
+    feedbackSequenceRef.current = feedbackKey;
+    setActiveFeedback({ tileItem, feedbackKey, isExiting: false });
+    feedbackHideTimeoutRef.current = window.setTimeout(() => {
+      setActiveFeedback((current) => (current?.feedbackKey === feedbackKey ? { ...current, isExiting: true } : current));
+      feedbackRemoveTimeoutRef.current = window.setTimeout(() => {
+        setActiveFeedback((current) => (current?.feedbackKey === feedbackKey ? null : current));
+      }, 180);
+    }, 850);
+  }
+
+  function runViewTransition(update) {
+    if (typeof document.startViewTransition === "function") {
+      document.startViewTransition(update);
+      return;
+    }
+    update();
+  }
+
+  function selectCategory(categoryId) {
+    runViewTransition(() => setActiveCategoryId(categoryId));
   }
 
   function updateSettings(settings) {
@@ -1050,16 +1107,17 @@ function App() {
           : [...current.categories, { ...category, tiles: [] }],
       };
     });
-    setActiveCategoryId(category.id);
+    selectCategory(category.id);
     setEditingCategory(null);
   }
 
   function deleteCategory(categoryId) {
+    const nextCategoryId = board.categories.find((category) => category.id !== categoryId)?.id;
     setBoard((current) => {
       const categories = current.categories.filter((category) => category.id !== categoryId);
-      setActiveCategoryId(categories[0]?.id);
       return { ...current, categories };
     });
+    selectCategory(nextCategoryId);
   }
 
   function exportBoard() {
@@ -1231,8 +1289,8 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
-      <aside className="sidebar" aria-label="Categorías">
+    <main className="app-shell motion-screen">
+      <aside className="sidebar motion-stagger-screen" aria-label="Categorías">
         <div className="brand">
           <div className="brand-logo">
             <img src={logoNunuUrl} alt="" />
@@ -1277,12 +1335,12 @@ function App() {
         </div>
 
         <nav className="category-list">
-          {board.categories.map((category) => (
+          {board.categories.map((category, index) => (
             <button
-              className={`category-button ${category.id === activeCategory?.id ? "active" : ""}`}
+              className={`category-button motion-stagger-item ${category.id === activeCategory?.id ? "active" : ""}`}
               key={category.id}
-              onClick={() => setActiveCategoryId(category.id)}
-              style={{ "--category-color": category.color }}
+              onClick={() => selectCategory(category.id)}
+              style={{ "--category-color": category.color, "--stagger-index": index }}
             >
               <span className="category-swatch" />
               {category.name}
@@ -1300,32 +1358,33 @@ function App() {
         </div>
       </aside>
 
-      <section className="workspace">
-        <header className="phrase-bar">
-          <div className="phrase-output" aria-live="polite">
-            {phrase.length ? (
-              phrase.map((item, index) => (
-                <button key={`${item.id}-${index}`} onClick={() => setPhrase((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
-                  {item.label}
-                </button>
-              ))
-            ) : (
-              <span>Toca tarjetas para formar una frase</span>
-            )}
+      <section className="workspace motion-stagger-screen">
+        {activeFeedback ? (
+          <div
+            className={`tile-feedback ${activeFeedback.isExiting ? "is-exiting" : ""}`}
+            key={activeFeedback.feedbackKey}
+            style={{ "--tile-color": activeFeedback.tileItem.color }}
+            role="status"
+            aria-live="polite"
+          >
+            <div className="tile-feedback-image">
+              <TileImage src={activeFeedback.tileItem.image} fallbackSize={92} />
+            </div>
+            <strong>{activeFeedback.tileItem.phrase || activeFeedback.tileItem.label}</strong>
           </div>
-          <div className="phrase-actions">
-            <button className="icon-button" aria-label="Leer frase" title="Leer frase" onClick={() => speak(phraseText)}>
-              <Volume2 size={22} />
-            </button>
-            <button className="icon-button" aria-label="Limpiar frase" title="Limpiar frase" onClick={() => setPhrase([])}>
-              <RotateCcw size={22} />
-            </button>
-          </div>
-        </header>
+        ) : null}
+        <PhraseBuilder
+          phraseItems={phrase}
+          phraseText={phraseText}
+          limitPulseKey={phraseLimitKey}
+          onPlay={() => speak(phraseText)}
+          onRemoveLast={(itemKey) => setPhrase((current) => current.filter((item, index) => `${item.id}-${index}` !== itemKey))}
+          onClear={() => setPhrase([])}
+        />
 
-        <div className="content-header">
+        <div className="content-header motion-content-header">
           <div>
-            <button className="back-button" onClick={() => setActiveCategoryId(board.categories[0]?.id)}>
+            <button className="back-button" onClick={() => selectCategory(board.categories[0]?.id)}>
               <ArrowLeft size={18} /> Inicio
             </button>
             <h2>{activeCategory?.name || "Sin categorías"}</h2>
@@ -1346,11 +1405,11 @@ function App() {
         </div>
 
         <div className={`tile-grid ${board.settings.largeTiles ? "large" : "compact"}`}>
-          {activeCategory?.tiles.map((item) => {
+          {activeCategory?.tiles.map((item, index) => {
             const youtubeEmbedUrl = getYouTubeEmbedUrl(item, { autoplay: true, controls: false, loop: true });
             return (
-              <article className="comm-tile" key={item.id} style={{ "--tile-color": item.color }}>
-                <button className="tile-play" onClick={() => playTile(item)}>
+              <article className={`comm-tile motion-stagger-item ${poppingTileId === item.id ? "is-popping" : ""}`} key={item.id} style={{ "--tile-color": item.color, "--stagger-index": index }}>
+                <button className="tile-play" onClick={() => handleTilePress(item)}>
                   <span className="tile-image">
                     {youtubeEmbedUrl ? (
                       <InlineYouTubeVideo tileItem={item} />
@@ -1423,14 +1482,74 @@ function App() {
   );
 }
 
-function AuthShell({ title, children }) {
+function PhraseBuilder({ phraseItems, phraseText, limitPulseKey, onPlay, onRemoveLast, onClear }) {
+  const endRef = useRef(null);
+  const removeTimeoutRef = useRef(null);
+  const [removingKey, setRemovingKey] = useState(null);
+
+  useEffect(() => {
+    if (!endRef.current) return;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    endRef.current.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "nearest", inline: "end" });
+  }, [phraseItems.length]);
+
+  useEffect(() => () => window.clearTimeout(removeTimeoutRef.current), []);
+
+  function removeLastItem() {
+    if (!phraseItems.length || removingKey) return;
+    const lastIndex = phraseItems.length - 1;
+    const itemKey = `${phraseItems[lastIndex].id}-${lastIndex}`;
+    setRemovingKey(itemKey);
+    removeTimeoutRef.current = window.setTimeout(() => {
+      onRemoveLast(itemKey);
+      setRemovingKey(null);
+    }, 180);
+  }
+
+  return (
+    <header className="phrase-bar motion-header">
+      <div className={`phrase-builder ${limitPulseKey ? "is-limit-reached" : ""}`} key={limitPulseKey}>
+        <div className="phrase-output" aria-live="polite" aria-label="Frase en construcción">
+          {phraseItems.length ? (
+            phraseItems.map((item, index) => (
+              <div className={`phrase-chip motion-stagger-item ${removingKey === `${item.id}-${index}` ? "is-removing" : ""}`} style={{ "--phrase-color": item.color, "--stagger-index": index }} key={`${item.id}-${index}`}>
+                <span className="phrase-chip-image">
+                  <TileImage src={item.image} fallbackSize={30} />
+                </span>
+                <span>{item.label || item.phrase}</span>
+              </div>
+            ))
+          ) : (
+            <span className="phrase-empty">Selecciona pictogramas para formar una frase</span>
+          )}
+          <span ref={endRef} className="phrase-output-end" aria-hidden="true" />
+        </div>
+        <span className="phrase-count" aria-hidden="true">{phraseItems.length}/{MAX_PHRASE_ITEMS}</span>
+      </div>
+      <div className="phrase-actions">
+        <button className="icon-button" aria-label="Reproducir frase" title="Reproducir frase" disabled={!phraseItems.length} onClick={onPlay}>
+          <Volume2 size={22} />
+        </button>
+        <button className="icon-button" aria-label="Borrar último elemento" title="Borrar último elemento" disabled={!phraseItems.length || Boolean(removingKey)} onClick={removeLastItem}>
+          <RotateCcw size={22} />
+        </button>
+        <button className="icon-button" aria-label="Limpiar frase" title="Limpiar frase" disabled={!phraseItems.length} onClick={onClear}>
+          <X size={22} />
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function AuthShell({ title, children, decoration }) {
   return (
     <main className="auth-shell">
       <div className="crayon-stick crayon-yellow" />
       <div className="crayon-stick crayon-blue" />
       <div className="crayon-stick crayon-pink" />
       <div className="crayon-stick crayon-green" />
-      <section className="auth-panel" aria-label={title}>
+      {decoration}
+      <section className={`auth-panel ${title === "Cargando Nunu" ? "auth-panel-loading" : ""}`} aria-label={title}>
         <div className="auth-rainbow" aria-hidden="true">
           <span />
           <span />
@@ -1464,6 +1583,7 @@ function LoginScreen({ error, isConfigured, onGoogle, onEmailSignIn, onEmailSign
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [focusedField, setFocusedField] = useState(null);
   const isSignUp = mode === "signUp";
 
   function submit(event) {
@@ -1474,7 +1594,7 @@ function LoginScreen({ error, isConfigured, onGoogle, onEmailSignIn, onEmailSign
   }
 
   return (
-    <AuthShell title="Entrar a Nunu">
+    <AuthShell title="Entrar a Nunu" decoration={<LoginAnimals focusedField={focusedField} />}>
       <div className="login-copy">
         <h2>Acceso familiar</h2>
         <p>Cada familia tendrá su propio espacio para crear perfiles y tableros personalizados.</p>
@@ -1493,11 +1613,11 @@ function LoginScreen({ error, isConfigured, onGoogle, onEmailSignIn, onEmailSign
         ) : null}
         <label>
           Correo electrónico
-          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="familia@correo.com" autoComplete="email" required />
+          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} onFocus={() => setFocusedField("email")} onBlur={() => setFocusedField(null)} placeholder="familia@correo.com" autoComplete="email" required />
         </label>
         <label>
           Contraseña
-          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mínimo 6 caracteres" autoComplete={isSignUp ? "new-password" : "current-password"} required />
+          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} onFocus={() => setFocusedField("password")} onBlur={() => setFocusedField(null)} placeholder="Mínimo 6 caracteres" autoComplete={isSignUp ? "new-password" : "current-password"} required />
         </label>
         <button className="primary-button login-button" disabled={!isConfigured} type="submit">
           {isSignUp ? "Crear cuenta" : "Entrar con correo"}
@@ -1517,6 +1637,48 @@ function LoginScreen({ error, isConfigured, onGoogle, onEmailSignIn, onEmailSign
 
       {error ? <p className="auth-error">{error}</p> : null}
     </AuthShell>
+  );
+}
+
+function LoginAnimals({ focusedField }) {
+  return (
+    <div className={`login-animals login-animals-${focusedField || "idle"}`} aria-hidden="true">
+      <div className="login-rabbit">
+        <svg viewBox="0 0 110 130" role="presentation">
+          <path className="rabbit-ear rabbit-ear-back" d="M31 53C12 37 14 7 26 6c15-1 19 25 16 43" />
+          <path className="rabbit-ear" d="M62 47C57 28 62 3 75 6c14 4 7 35-2 48" />
+          <ellipse className="rabbit-body" cx="54" cy="91" rx="35" ry="31" />
+          <circle className="rabbit-face" cx="52" cy="65" r="29" />
+          <circle className="animal-eye" cx="42" cy="64" r="3" />
+          <circle className="animal-eye" cx="63" cy="64" r="3" />
+          <path className="animal-nose" d="M49 72q4 4 8 0" />
+          <circle className="rabbit-cheek" cx="31" cy="74" r="5" />
+          <circle className="rabbit-cheek" cx="73" cy="74" r="5" />
+        </svg>
+      </div>
+      <div className="login-bunny-main">
+        <svg viewBox="0 0 190 190" role="presentation">
+          <path className="bunny-main-ear bunny-main-ear-left" d="M54 65C31 51 27 14 43 8c19-7 31 26 28 52" />
+          <path className="bunny-main-ear bunny-main-ear-right" d="M104 60c-1-27 13-57 31-52 16 5 10 42-9 57" />
+          <path className="bunny-main-inner-ear" d="M51 51c-10-13-10-29-3-33 9-4 16 17 15 31m51 1c2-15 10-29 17-27 8 3 2 23-9 32" />
+          <ellipse className="bunny-main-body" cx="94" cy="143" rx="52" ry="38" />
+          <circle className="bunny-main-face" cx="94" cy="91" r="50" />
+          <ellipse className="bunny-main-cheeks" cx="94" cy="105" rx="37" ry="29" />
+          <g className="bunny-main-eyes">
+            <circle className="animal-eye" cx="75" cy="88" r="4" />
+            <circle className="animal-eye" cx="113" cy="88" r="4" />
+          </g>
+          <g className="bunny-main-closed-eyes">
+            <path d="M68 89q7 7 14 0M106 89q7 7 14 0" />
+          </g>
+          <path className="animal-nose bunny-main-nose" d="M86 108q8-7 16 0-4 7-8 7t-8-7Z" />
+          <path className="bunny-main-smile" d="M94 115v8m0 0q-9 8-16 0m16 0q9 8 16 0" />
+          <circle className="bunny-main-cheek" cx="63" cy="112" r="7" />
+          <circle className="bunny-main-cheek" cx="125" cy="112" r="7" />
+          <circle className="bunny-main-tail" cx="146" cy="151" r="17" />
+        </svg>
+      </div>
+    </div>
   );
 }
 
@@ -2185,12 +2347,25 @@ function SettingsModal({ board, onClose, onSettings, onExport, onImport, onReset
 }
 
 function Modal({ title, children, onClose, className = "" }) {
+  const [isClosing, setIsClosing] = useState(false);
+  const isClosingRef = useRef(false);
+  const closeTimeoutRef = useRef(null);
+
+  useEffect(() => () => window.clearTimeout(closeTimeoutRef.current), []);
+
+  function requestClose() {
+    if (isClosingRef.current) return;
+    isClosingRef.current = true;
+    setIsClosing(true);
+    closeTimeoutRef.current = window.setTimeout(onClose, 180);
+  }
+
   return (
-    <div className="modal-backdrop" role="presentation">
+    <div className={`modal-backdrop ${isClosing ? "is-closing" : ""}`} role="presentation">
       <section className={`modal-panel ${className}`} role="dialog" aria-modal="true" aria-label={title}>
         <header className="modal-header">
           <h3>{title}</h3>
-          <button className="icon-button" aria-label="Cerrar" onClick={onClose}>
+          <button className="icon-button" aria-label="Cerrar" onClick={requestClose}>
             <X size={22} />
           </button>
         </header>
