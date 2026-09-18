@@ -10,9 +10,10 @@ import {
   signOut,
   updateProfile,
 } from "firebase/auth";
-import { collection, doc, getDoc, getDocs, serverTimestamp, setDoc } from "firebase/firestore";
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import {
   ArrowLeft,
+  BookOpen,
   Camera,
   Check,
   Download,
@@ -41,6 +42,7 @@ import logoNunuUrl from "../logo_nunu.jpeg";
 const STORAGE_KEY = "nunu-comunicador-v1";
 const CHILDREN_STORAGE_KEY = "nunu-comunicador-children-v1";
 const ACTIVE_CHILD_STORAGE_KEY = "nunu-comunicador-active-child-v1";
+const ACTIVE_BOARD_STORAGE_KEY = "nunu-comunicador-active-board-v1";
 const AUTO_IMAGE_CACHE_KEY = "nunu-comunicador-auto-images-v1";
 const MAX_PHRASE_ITEMS = 8;
 const AI_BOARD_ENDPOINT = "/api/generate-board";
@@ -130,6 +132,10 @@ function getActiveChildStorageKey(userId) {
   return `${ACTIVE_CHILD_STORAGE_KEY}-${userId}`;
 }
 
+function getActiveBoardStorageKey(userId) {
+  return `${ACTIVE_BOARD_STORAGE_KEY}-${userId}`;
+}
+
 function loadBoard(userId, childId) {
   try {
     const stored = localStorage.getItem(getBoardStorageKey(userId, childId));
@@ -194,6 +200,8 @@ function normalizeAiBoardResponse(payload) {
 
   return {
     ...defaultBoard,
+    title: String(payload?.title || "Tablero generado").trim() || "Tablero generado",
+    description: String(payload?.description || "Tablero generado por Nunu").trim() || "Tablero generado por Nunu",
     categories: normalizedCategories.length ? normalizedCategories : defaultBoard.categories,
     settings: { ...defaultBoard.settings },
   };
@@ -246,6 +254,61 @@ async function loadCloudBoard(userId, childId) {
   } catch {
     return loadBoard(userId, childId);
   }
+}
+
+async function loadCloudBoards(userId) {
+  if (!db) return [];
+
+  try {
+    const snapshot = await withTimeout(getDocs(collection(db, "users", userId, "boards")));
+    return snapshot.docs
+      .map((boardDoc) => ({ id: boardDoc.id, ...boardDoc.data() }))
+      .sort((left, right) => getBoardDate(right) - getBoardDate(left));
+  } catch {
+    return [];
+  }
+}
+
+function getBoardDate(boardRecord) {
+  const value = boardRecord?.updatedAt || boardRecord?.createdAt;
+  if (typeof value?.toMillis === "function") return value.toMillis();
+  if (typeof value === "number") return value;
+  return 0;
+}
+
+function getBoardRecord(boardId, board, { childId, title, description, generatedBy = "manual", originalPrompt = "" } = {}) {
+  const record = {
+    board,
+    title: title || board?.title || "Tablero sin título",
+    description: description || board?.description || "",
+    categories: board?.categories || [],
+    childId: childId || "",
+    generatedBy,
+    originalPrompt,
+    updatedAt: serverTimestamp(),
+  };
+
+  if (!boardId) record.createdAt = serverTimestamp();
+  return record;
+}
+
+async function createCloudBoard(userId, board, metadata) {
+  const reference = await withTimeout(
+    addDoc(collection(db, "users", userId, "boards"), getBoardRecord(null, board, metadata)),
+    5000,
+  );
+  return reference.id;
+}
+
+async function updateCloudBoard(userId, boardId, board, metadata) {
+  await withTimeout(
+    updateDoc(doc(db, "users", userId, "boards", boardId), getBoardRecord(boardId, board, metadata)),
+    5000,
+  );
+}
+
+async function deleteCloudBoard(userId, boardId) {
+  await withTimeout(deleteDoc(doc(db, "users", userId, "boards", boardId)), 5000);
 }
 
 function createChildProfile(data) {
@@ -876,6 +939,8 @@ function App() {
   const [phraseLimitKey, setPhraseLimitKey] = useState(0);
   const [children, setChildren] = useState([]);
   const [activeChildId, setActiveChildId] = useState("");
+  const [currentBoardId, setCurrentBoardId] = useState(null);
+  const [boardLibrary, setBoardLibrary] = useState([]);
   const [editingChild, setEditingChild] = useState(null);
   const [cloudStatus, setCloudStatus] = useState("");
   const [voices, setVoices] = useState([]);
@@ -885,6 +950,8 @@ function App() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiStatus, setAiStatus] = useState("Entendiendo tu idea...");
   const [aiPreview, setAiPreview] = useState(null);
+  const [isBoardLibraryOpen, setIsBoardLibraryOpen] = useState(false);
+  const [isBoardSaving, setIsBoardSaving] = useState(false);
   const cloudBootstrapKey = useRef("");
   const phraseItemsRef = useRef([]);
   const tilePopTimeoutRef = useRef(null);
@@ -929,10 +996,23 @@ function App() {
         const nextChildren = await loadCloudChildren(user.uid);
         const storedChildId = localStorage.getItem(getActiveChildStorageKey(user.uid));
         const nextActiveChild = nextChildren.find((child) => child.id === storedChildId) || nextChildren[0];
-        const nextBoard = nextActiveChild ? await loadCloudBoard(user.uid, nextActiveChild.id) : defaultBoard;
+        const nextBoards = (await loadCloudBoards(user.uid)).map((record) => (
+          record.id === nextActiveChild?.id && !record.title
+            ? { ...record, title: "Tablero principal", description: "Tablero guardado anteriormente" }
+            : record
+        ));
+        const storedBoardId = localStorage.getItem(getActiveBoardStorageKey(user.uid));
+        const selectedRecord = nextBoards.find((record) => record.id === storedBoardId)
+          || nextBoards.find((record) => record.childId === nextActiveChild?.id)
+          || nextBoards[0];
+        const nextBoard = selectedRecord?.board
+          ? { ...selectedRecord.board, title: selectedRecord.title, description: selectedRecord.description, generatedBy: selectedRecord.generatedBy, originalPrompt: selectedRecord.originalPrompt }
+          : nextActiveChild ? await loadCloudBoard(user.uid, nextActiveChild.id) : defaultBoard;
         setAuthUser(user);
         setChildren(nextChildren);
+        setBoardLibrary(nextBoards);
         setActiveChildId(nextActiveChild?.id || "");
+        setCurrentBoardId(selectedRecord?.id || nextActiveChild?.id || null);
         setBoard(nextBoard);
         setActiveCategoryId(nextBoard.categories[0]?.id);
         setPhrase([]);
@@ -940,7 +1020,9 @@ function App() {
       } else {
         setAuthUser(null);
         setChildren([]);
+        setBoardLibrary([]);
         setActiveChildId("");
+        setCurrentBoardId(null);
         setBoard(defaultBoard);
         setActiveCategoryId(defaultBoard.categories[0]?.id);
         setPhrase([]);
@@ -959,18 +1041,20 @@ function App() {
       alert("El navegador no pudo guardar el tablero. Prueba con grabaciones más cortas o exporta tu tablero.");
     }
 
-    if (!db) return;
+    if (!db || !currentBoardId) return;
     const timeout = window.setTimeout(async () => {
       setCloudStatus("Guardando cambios...");
       try {
-        await withTimeout(
-          setDoc(doc(db, "users", authUser.uid, "boards", activeChildId), {
-            board,
-            childId: activeChildId,
-            updatedAt: serverTimestamp(),
-          }),
-          3000,
-        );
+        await updateCloudBoard(authUser.uid, currentBoardId, board, {
+          childId: activeChildId,
+          title: board.title,
+          description: board.description,
+          generatedBy: board.generatedBy || "manual",
+          originalPrompt: board.originalPrompt || "",
+        });
+        setBoardLibrary((current) => current.map((record) => record.id === currentBoardId
+          ? { ...record, board, title: board.title || record.title, description: board.description || record.description, updatedAt: new Date() }
+          : record));
         setCloudStatus("Guardado en la nube");
       } catch {
         setCloudStatus("Guardado en este dispositivo");
@@ -978,7 +1062,7 @@ function App() {
     }, 600);
 
     return () => window.clearTimeout(timeout);
-  }, [authUser, activeChildId, board]);
+  }, [authUser, activeChildId, currentBoardId, board]);
 
   useEffect(() => {
     if (!authUser) return;
@@ -1238,8 +1322,8 @@ function App() {
         instruction: refinementInstruction,
       });
       setAiPreview({
-        title: nextBoard.categories?.[0] ? (currentBoard ? "Tu tablero está listo" : "Tu tablero está listo") : "Tablero generado",
-        description: refinementInstruction ? "Versión refinada por Nunu." : "Tablero generado a partir de tu petición.",
+        title: nextBoard.title || "Tablero generado",
+        description: refinementInstruction ? "Versión refinada por Nunu." : (nextBoard.description || "Tablero generado a partir de tu petición."),
         board: nextBoard,
       });
       setAiStatus("Preparando las tarjetas...");
@@ -1251,15 +1335,142 @@ function App() {
     }
   }
 
-  function saveGeneratedBoard() {
+  async function saveGeneratedBoard() {
     if (!aiPreview?.board) return;
-    setBoard(aiPreview.board);
-    setActiveCategoryId(aiPreview.board.categories[0]?.id);
-    setPhrase([]);
-    setIsAiModalOpen(false);
-    setAiPreview(null);
+    if (!authUser || !db) {
+      setAiError("Inicia sesión para guardar el tablero en la nube.");
+      return;
+    }
+
+    setIsBoardSaving(true);
     setAiError("");
-    setAiPrompt("");
+    try {
+      const nextBoard = {
+        ...aiPreview.board,
+        title: aiPreview.title || aiPreview.board.title || "Tablero generado",
+        description: aiPreview.description || aiPreview.board.description || "Tablero generado por Nunu",
+        generatedBy: "ai",
+        originalPrompt: aiPrompt.trim(),
+      };
+      const boardId = await createCloudBoard(authUser.uid, nextBoard, {
+        childId: activeChildId,
+        title: nextBoard.title,
+        description: nextBoard.description,
+        generatedBy: "ai",
+        originalPrompt: aiPrompt.trim(),
+      });
+      const record = {
+        id: boardId,
+        board: nextBoard,
+        title: nextBoard.title,
+        description: nextBoard.description,
+        childId: activeChildId,
+        generatedBy: "ai",
+        originalPrompt: aiPrompt.trim(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      setBoardLibrary((current) => [record, ...current]);
+      localStorage.setItem(getActiveBoardStorageKey(authUser.uid), boardId);
+      setCurrentBoardId(boardId);
+      setBoard(nextBoard);
+      setActiveCategoryId(nextBoard.categories[0]?.id);
+      setPhrase([]);
+      setCloudStatus("Tablero guardado");
+      setIsAiModalOpen(false);
+      setAiPreview(null);
+      setAiPrompt("");
+    } catch {
+      setAiError("No pudimos guardar el tablero. Inténtalo de nuevo.");
+    } finally {
+      setIsBoardSaving(false);
+    }
+  }
+
+  async function saveCurrentBoard() {
+    if (!authUser || !db || isBoardSaving) return;
+    setIsBoardSaving(true);
+    setCloudStatus("Guardando cambios...");
+    try {
+      const metadata = {
+        childId: activeChildId,
+        title: board.title,
+        description: board.description,
+        generatedBy: board.generatedBy || "manual",
+        originalPrompt: board.originalPrompt || "",
+      };
+      const savedBoardId = currentBoardId || await createCloudBoard(authUser.uid, board, metadata);
+      if (currentBoardId) {
+        await updateCloudBoard(authUser.uid, currentBoardId, board, metadata);
+      }
+      if (!currentBoardId) {
+        setCurrentBoardId(savedBoardId);
+        localStorage.setItem(getActiveBoardStorageKey(authUser.uid), savedBoardId);
+        setBoardLibrary((current) => [{
+          id: savedBoardId,
+          board,
+          title: board.title || "Tablero sin título",
+          description: board.description || "",
+          childId: activeChildId,
+          generatedBy: board.generatedBy || "manual",
+          originalPrompt: board.originalPrompt || "",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }, ...current]);
+      } else {
+        setBoardLibrary((current) => current.map((record) => record.id === currentBoardId
+          ? { ...record, board, title: board.title || record.title, description: board.description || record.description, updatedAt: new Date() }
+          : record));
+      }
+      setCloudStatus("Cambios guardados");
+    } catch {
+      setCloudStatus("No pudimos guardar el tablero. Inténtalo de nuevo.");
+    } finally {
+      setIsBoardSaving(false);
+    }
+  }
+
+  function openBoard(record) {
+    if (!record?.board) return;
+    const nextBoard = {
+      ...record.board,
+      title: record.title || record.board.title,
+      description: record.description || record.board.description,
+      generatedBy: record.generatedBy || record.board.generatedBy || "manual",
+      originalPrompt: record.originalPrompt || record.board.originalPrompt || "",
+    };
+    setBoard(nextBoard);
+    setCurrentBoardId(record.id);
+    if (record.childId && record.childId !== activeChildId) {
+      setActiveChildId(record.childId);
+      localStorage.setItem(getActiveChildStorageKey(authUser.uid), record.childId);
+    }
+    localStorage.setItem(getActiveBoardStorageKey(authUser.uid), record.id);
+    setActiveCategoryId(nextBoard.categories[0]?.id);
+    setPhrase([]);
+    setIsBoardLibraryOpen(false);
+    setCloudStatus("Tablero abierto");
+  }
+
+  async function removeBoard(record) {
+    if (!record || !authUser || !db || !confirm("¿Eliminar este tablero?")) return;
+    try {
+      await deleteCloudBoard(authUser.uid, record.id);
+      const remaining = boardLibrary.filter((item) => item.id !== record.id);
+      setBoardLibrary(remaining);
+      if (record.id === currentBoardId) {
+        const nextRecord = remaining[0];
+        if (nextRecord) openBoard(nextRecord);
+        else {
+          setCurrentBoardId(null);
+          setBoard(defaultBoard);
+          setActiveCategoryId(defaultBoard.categories[0]?.id);
+        }
+      }
+      setCloudStatus("Tablero eliminado");
+    } catch {
+      setCloudStatus("No pudimos eliminar el tablero. Inténtalo de nuevo.");
+    }
   }
 
   function getAuthErrorMessage(error) {
@@ -1319,7 +1530,9 @@ function App() {
     await signOut(auth);
     setAuthUser(null);
     setChildren([]);
+    setBoardLibrary([]);
     setActiveChildId("");
+    setCurrentBoardId(null);
     setBoard(defaultBoard);
     setActiveCategoryId(defaultBoard.categories[0]?.id);
     setPhrase([]);
@@ -1327,9 +1540,12 @@ function App() {
 
   async function selectChild(childId) {
     if (!authUser || childId === activeChildId) return;
-    const nextBoard = await loadCloudBoard(authUser.uid, childId);
+    const selectedRecord = boardLibrary.find((record) => record.childId === childId);
+    const nextBoard = selectedRecord?.board || await loadCloudBoard(authUser.uid, childId);
     localStorage.setItem(getActiveChildStorageKey(authUser.uid), childId);
+    localStorage.setItem(getActiveBoardStorageKey(authUser.uid), selectedRecord?.id || childId);
     setActiveChildId(childId);
+    setCurrentBoardId(selectedRecord?.id || childId);
     setBoard(nextBoard);
     setActiveCategoryId(nextBoard.categories[0]?.id);
     setPhrase([]);
@@ -1373,12 +1589,26 @@ function App() {
           }),
           3000,
         );
+        setBoardLibrary((current) => [
+          ...current.filter((record) => record.id !== nextChild.id),
+          {
+            id: nextChild.id,
+            board: nextBoard,
+            title: nextBoard.title || `${nextChild.name}: tablero principal`,
+            description: nextBoard.description || "Tablero principal",
+            childId: nextChild.id,
+            generatedBy: "manual",
+            updatedAt: new Date(),
+          },
+        ]);
         setCloudStatus("Guardado en la nube");
       } catch {
         setCloudStatus("Tablero guardado en este dispositivo");
       }
     }
     setBoard(nextBoard);
+    setCurrentBoardId(nextChild.id);
+    localStorage.setItem(getActiveBoardStorageKey(authUser?.uid || ""), nextChild.id);
     setActiveCategoryId(nextBoard.categories[0]?.id);
     setPhrase([]);
     setEditingChild(null);
@@ -1465,6 +1695,12 @@ function App() {
         <div className="sidebar-actions">
           <button className="secondary-button" onClick={() => setIsAiModalOpen(true)}>
             <Sparkles size={18} /> Crear con IA
+          </button>
+          <button className="secondary-button" onClick={() => setIsBoardLibraryOpen(true)}>
+            <BookOpen size={18} /> Mis tableros
+          </button>
+          <button className="secondary-button" disabled={isBoardSaving} onClick={saveCurrentBoard}>
+            <Save size={18} /> {isBoardSaving ? "Guardando..." : "Guardar cambios"}
           </button>
           <button className="secondary-button" onClick={() => setEditingCategory({ id: uid("cat"), name: "", color: "#8ED6FF" })}>
             <Plus size={18} /> Categoría
@@ -1609,6 +1845,7 @@ function App() {
             setAiError("");
           }}
           onSave={saveGeneratedBoard}
+          isSaving={isBoardSaving}
           onRegenerate={() => generateAiBoard(aiPrompt, aiPreview?.board)}
           onTilePlay={handleTilePress}
           onEditTile={(categoryId, tile) => {
@@ -1623,11 +1860,68 @@ function App() {
         />
       ) : null}
 
+      {isBoardLibraryOpen ? (
+        <BoardLibraryModal
+          boards={boardLibrary}
+          currentBoardId={currentBoardId}
+          onClose={() => setIsBoardLibraryOpen(false)}
+          onOpen={openBoard}
+          onDelete={removeBoard}
+        />
+      ) : null}
+
       {editingChild ? (
         <ChildProfileModal child={editingChild.id ? editingChild : null} onClose={() => setEditingChild(null)} onSave={saveChild} />
       ) : null}
 
     </main>
+  );
+}
+
+function formatBoardDate(value) {
+  const timestamp = typeof value?.toDate === "function" ? value.toDate() : value instanceof Date ? value : value ? new Date(value) : null;
+  if (!timestamp || Number.isNaN(timestamp.getTime())) return "Fecha pendiente";
+  return new Intl.DateTimeFormat("es-MX", { dateStyle: "medium" }).format(timestamp);
+}
+
+function BoardLibraryModal({ boards, currentBoardId, onClose, onOpen, onDelete }) {
+  return (
+    <Modal title="Mis tableros" onClose={onClose}>
+      <div className="board-library">
+        <div className="board-library-heading">
+          <p className="ai-board-description">Tus tableros guardados aparecen aquí y permanecen separados.</p>
+          <span className="board-library-count">{boards.length} {boards.length === 1 ? "tablero" : "tableros"}</span>
+        </div>
+        {boards.length ? (
+          <div className="board-library-list">
+            {boards.map((record) => (
+              <article className={`board-library-card ${record.id === currentBoardId ? "is-current" : ""}`} key={record.id}>
+                <div className="board-library-card-copy">
+                  <div className="board-library-card-title">
+                    <BookOpen size={18} />
+                    <h4>{record.title || record.board?.title || "Tablero sin título"}</h4>
+                  </div>
+                  <p>{record.description || "Sin descripción"}</p>
+                  <span>
+                    {record.generatedBy === "ai" ? "Generado con IA" : "Tablero manual"} · {formatBoardDate(record.updatedAt || record.createdAt)}
+                  </span>
+                </div>
+                <div className="board-library-card-actions">
+                  <button className="primary-button" type="button" onClick={() => onOpen(record)}>Abrir</button>
+                  <button className="danger-button" type="button" onClick={() => onDelete(record)}>Eliminar</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="board-library-empty">
+            <BookOpen size={30} />
+            <strong>Aún no tienes tableros guardados</strong>
+            <p>Crea uno con IA o guarda los cambios de tu tablero actual.</p>
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -1642,6 +1936,7 @@ function AiBoardModal({
   onRefine,
   onClose,
   onSave,
+  isSaving,
   onRegenerate,
   onTilePlay,
   onEditTile,
@@ -1698,7 +1993,7 @@ function AiBoardModal({
             <div className="ai-preview-actions">
               <button className="secondary-button" type="button" onClick={onRegenerate}>Regenerar</button>
               <button className="secondary-button" type="button" onClick={() => onGenerate(prompt || "", preview.board)}>Editar</button>
-              <button className="primary-button" type="button" onClick={onSave}>Guardar tablero</button>
+              <button className="primary-button" type="button" disabled={isSaving} onClick={onSave}>{isSaving ? "Guardando..." : "Guardar tablero"}</button>
             </div>
           </div>
 
