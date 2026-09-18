@@ -1,11 +1,10 @@
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
 const GEMINI_MODEL_CANDIDATES = [GEMINI_MODEL];
 
-const allowedOrigins = [
+const ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://localhost:4173",
-  "http://127.0.0.1:5173",
-  "http://127.0.0.1:4173",
+  "https://comunicador-visual-nunu.vercel.app",
 ];
 
 const boardSchema = {
@@ -45,14 +44,19 @@ const boardSchema = {
 };
 
 function buildCorsHeaders(origin) {
-  const isAllowed = origin && allowedOrigins.includes(origin);
-  return {
-    "Access-Control-Allow-Origin": isAllowed ? origin : "http://localhost:5173",
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : null;
+  const headers = {
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
+
+  if (allowedOrigin) {
+    headers["Access-Control-Allow-Origin"] = allowedOrigin;
+  }
+
+  return headers;
 }
 
 function sanitizePrompt(prompt) {
