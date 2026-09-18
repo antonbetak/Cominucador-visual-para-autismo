@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/api/generate-board",
+      "destination": "https://nunu-ai-worker.antonbetak.workers.dev/api/generate-board"
+    }
+  ]
+}

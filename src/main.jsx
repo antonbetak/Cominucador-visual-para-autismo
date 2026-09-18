@@ -43,8 +43,7 @@ const CHILDREN_STORAGE_KEY = "nunu-comunicador-children-v1";
 const ACTIVE_CHILD_STORAGE_KEY = "nunu-comunicador-active-child-v1";
 const AUTO_IMAGE_CACHE_KEY = "nunu-comunicador-auto-images-v1";
 const MAX_PHRASE_ITEMS = 8;
-const AI_API_URL = import.meta.env.VITE_AI_API_URL || "";
-const AI_BOARD_ENDPOINT = `${AI_API_URL}/api/generate-board`;
+const AI_BOARD_ENDPOINT = "/api/generate-board";
 
 const colorOptions = [
   "#F9E66B",
