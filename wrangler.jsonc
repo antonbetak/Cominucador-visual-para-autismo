@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nunu-ai-worker",
+  "main": "workers/generate-board.mjs",
+  "compatibility_date": "2025-07-01",
+  "observability": {
+    "enabled": true
+  }
+}

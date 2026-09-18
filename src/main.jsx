@@ -19,6 +19,7 @@ import {
   Image as ImageIcon,
   Link,
   LogOut,
+  Sparkles,
   Mic,
   MicOff,
   Pencil,
@@ -42,6 +43,8 @@ const CHILDREN_STORAGE_KEY = "nunu-comunicador-children-v1";
 const ACTIVE_CHILD_STORAGE_KEY = "nunu-comunicador-active-child-v1";
 const AUTO_IMAGE_CACHE_KEY = "nunu-comunicador-auto-images-v1";
 const MAX_PHRASE_ITEMS = 8;
+const AI_API_URL = import.meta.env.VITE_AI_API_URL || "";
+const AI_BOARD_ENDPOINT = `${AI_API_URL}/api/generate-board`;
 
 const colorOptions = [
   "#F9E66B",
@@ -156,6 +159,70 @@ function withTimeout(promise, timeoutMs = 3500) {
       window.setTimeout(() => reject(new Error("timeout")), timeoutMs);
     }),
   ]);
+}
+
+function getAiMaxCardCount(prompt) {
+  const match = String(prompt || "").match(/(?:max(?:imo|imum)?|máximo|maximum)\s+(\d+)\s+(?:tarjetas|cards|tiles)/i);
+  if (match) return Math.max(2, Math.min(16, Number(match[1])));
+  return undefined;
+}
+
+function normalizeAiBoardResponse(payload) {
+  const categories = Array.isArray(payload?.categories) ? payload.categories : [];
+  const normalizedCategories = categories
+    .map((category, categoryIndex) => {
+      const cards = Array.isArray(category?.cards) ? category.cards : [];
+      const tiles = cards.map((card, cardIndex) => {
+        const concept = String(card?.concept || card?.label || "general").trim() || "general";
+        const label = String(card?.label || "Sin texto").trim() || "Sin texto";
+        return tile(
+          `ai-${categoryIndex + 1}-${cardIndex + 1}-${Date.now().toString(36)}`,
+          label,
+          String(card?.speech || label).trim() || label,
+          ["#F9E66B", "#8ED6FF", "#FFB7C3", "#B7E4A6", "#D6C4FF", "#BFE8D4"][cardIndex % 6],
+          makeAnimatedSymbol(concept, cardIndex % 3),
+        );
+      });
+
+      return {
+        id: `ai-category-${categoryIndex + 1}-${Date.now().toString(36)}`,
+        name: String(category?.name || `Categoría ${categoryIndex + 1}`).trim() || `Categoría ${categoryIndex + 1}`,
+        color: ["#F9E66B", "#8ED6FF", "#FFB7C3", "#B7E4A6", "#D6C4FF", "#BFE8D4"][categoryIndex % 6],
+        tiles,
+      };
+    })
+    .filter((category) => category.tiles.length > 0);
+
+  return {
+    ...defaultBoard,
+    categories: normalizedCategories.length ? normalizedCategories : defaultBoard.categories,
+    settings: { ...defaultBoard.settings },
+  };
+}
+
+async function generateBoardFromAi({ prompt, currentBoard, instruction }) {
+  const payload = {
+    prompt: typeof prompt === "string" ? prompt.trim() : "",
+    currentBoard: currentBoard || null,
+    instruction: typeof instruction === "string" ? instruction.trim() : "",
+    maxCards: getAiMaxCardCount(typeof prompt === "string" ? prompt : ""),
+  };
+
+  const response = await fetch(AI_BOARD_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const reason = await response.json().catch(() => ({}));
+    throw new Error(reason?.error || "No pude crear el tablero. Inténtalo nuevamente.");
+  }
+
+  const data = await response.json();
+  return normalizeAiBoardResponse(data);
 }
 
 async function loadCloudChildren(userId) {
@@ -813,6 +880,12 @@ function App() {
   const [editingChild, setEditingChild] = useState(null);
   const [cloudStatus, setCloudStatus] = useState("");
   const [voices, setVoices] = useState([]);
+  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiError, setAiError] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiStatus, setAiStatus] = useState("Entendiendo tu idea...");
+  const [aiPreview, setAiPreview] = useState(null);
   const cloudBootstrapKey = useRef("");
   const phraseItemsRef = useRef([]);
   const tilePopTimeoutRef = useRef(null);
@@ -1148,6 +1221,48 @@ function App() {
     event.target.value = "";
   }
 
+  async function generateAiBoard(promptOverride = aiPrompt, currentBoard = aiPreview?.board, refinementInstruction = "") {
+    const trimmedPrompt = (promptOverride || "").trim();
+    if (!trimmedPrompt && !currentBoard) {
+      setAiError("Escribe qué tablero quieres crear.");
+      return;
+    }
+
+    setAiError("");
+    setAiLoading(true);
+    setAiStatus("Entendiendo tu idea...");
+
+    try {
+      const nextBoard = await generateBoardFromAi({
+        prompt: trimmedPrompt || (currentBoard ? "Refina el tablero actual" : ""),
+        currentBoard,
+        instruction: refinementInstruction,
+      });
+      setAiPreview({
+        title: nextBoard.categories?.[0] ? (currentBoard ? "Tu tablero está listo" : "Tu tablero está listo") : "Tablero generado",
+        description: refinementInstruction ? "Versión refinada por Nunu." : "Tablero generado a partir de tu petición.",
+        board: nextBoard,
+      });
+      setAiStatus("Preparando las tarjetas...");
+    } catch (error) {
+      setAiError(error.message || "No pude crear el tablero. Inténtalo nuevamente.");
+      setAiStatus("No pude crear el tablero.");
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  function saveGeneratedBoard() {
+    if (!aiPreview?.board) return;
+    setBoard(aiPreview.board);
+    setActiveCategoryId(aiPreview.board.categories[0]?.id);
+    setPhrase([]);
+    setIsAiModalOpen(false);
+    setAiPreview(null);
+    setAiError("");
+    setAiPrompt("");
+  }
+
   function getAuthErrorMessage(error) {
     const messages = {
       "auth/email-already-in-use": "Ese correo ya tiene cuenta. Prueba iniciar sesión.",
@@ -1349,6 +1464,9 @@ function App() {
         </nav>
 
         <div className="sidebar-actions">
+          <button className="secondary-button" onClick={() => setIsAiModalOpen(true)}>
+            <Sparkles size={18} /> Crear con IA
+          </button>
           <button className="secondary-button" onClick={() => setEditingCategory({ id: uid("cat"), name: "", color: "#8ED6FF" })}>
             <Plus size={18} /> Categoría
           </button>
@@ -1474,11 +1592,163 @@ function App() {
         />
       )}
 
+      {isAiModalOpen ? (
+        <AiBoardModal
+          prompt={aiPrompt}
+          onPromptChange={setAiPrompt}
+          isLoading={aiLoading}
+          status={aiStatus}
+          error={aiError}
+          preview={aiPreview}
+          onGenerate={() => generateAiBoard(aiPrompt, aiPreview?.board)}
+          onRefine={(instruction) => {
+            if (!aiPreview?.board) return;
+            generateAiBoard(aiPrompt || "Refina este tablero", aiPreview.board, instruction);
+          }}
+          onClose={() => {
+            setIsAiModalOpen(false);
+            setAiError("");
+          }}
+          onSave={saveGeneratedBoard}
+          onRegenerate={() => generateAiBoard(aiPrompt, aiPreview?.board)}
+          onTilePlay={handleTilePress}
+          onEditTile={(categoryId, tile) => {
+            setIsAiModalOpen(false);
+            setEditingTile({ categoryId, tile });
+          }}
+          onEditCategory={(category) => {
+            setIsAiModalOpen(false);
+            setEditingCategory(category);
+          }}
+          onAddCategory={() => setEditingCategory({ id: uid("cat"), name: "", color: "#8ED6FF" })}
+        />
+      ) : null}
+
       {editingChild ? (
         <ChildProfileModal child={editingChild.id ? editingChild : null} onClose={() => setEditingChild(null)} onSave={saveChild} />
       ) : null}
 
     </main>
+  );
+}
+
+function AiBoardModal({
+  prompt,
+  onPromptChange,
+  isLoading,
+  status,
+  error,
+  preview,
+  onGenerate,
+  onRefine,
+  onClose,
+  onSave,
+  onRegenerate,
+  onTilePlay,
+  onEditTile,
+  onEditCategory,
+  onAddCategory,
+}) {
+  const [refinePrompt, setRefinePrompt] = useState("");
+  const examples = [
+    "🍽 Hora de comer",
+    "🏫 Escuela",
+    "📖 Un cuento",
+    "😊 Emociones",
+    "🛒 Supermercado",
+    "🎨 Actividad",
+  ];
+
+  return (
+    <Modal title={preview ? "Tu tablero está listo" : "Crear tablero con IA"} onClose={onClose}>
+      {!preview ? (
+        <div className="ai-board-form">
+          <p className="ai-board-description">Cuéntale a Nunu qué necesitas y preparará el tablero por ti.</p>
+          <textarea
+            value={prompt}
+            onChange={(event) => onPromptChange(event.target.value)}
+            placeholder="Ejemplo: Hazme un tablero del cuento de Los tres cerditos con personajes, acciones y emociones."
+            rows={6}
+          />
+          <p className="field-hint">Evita incluir nombres u otros datos personales.</p>
+
+          <div className="quick-example-row">
+            {examples.map((example) => (
+              <button key={example} type="button" className="quick-chip" onClick={() => onPromptChange(example.replace(/^.*\s/, ""))}>
+                {example}
+              </button>
+            ))}
+          </div>
+
+          {error ? <p className="auth-error">{error}</p> : null}
+
+          <footer className="modal-actions">
+            <button className="secondary-button" type="button" onClick={onClose}>Cancelar</button>
+            <button className="primary-button" type="button" disabled={isLoading || !prompt.trim()} onClick={onGenerate}>
+              {isLoading ? "✨ Nunu está preparando tu tablero..." : "✨ Crear tablero"}
+            </button>
+          </footer>
+        </div>
+      ) : (
+        <div className="ai-board-preview">
+          <div className="ai-preview-header">
+            <div>
+              <h3>{preview.title || "Tu tablero está listo"}</h3>
+              <p>{preview.description || "Tablero listo para revisar."}</p>
+            </div>
+            <div className="ai-preview-actions">
+              <button className="secondary-button" type="button" onClick={onRegenerate}>Regenerar</button>
+              <button className="secondary-button" type="button" onClick={() => onGenerate(prompt || "", preview.board)}>Editar</button>
+              <button className="primary-button" type="button" onClick={onSave}>Guardar tablero</button>
+            </div>
+          </div>
+
+          {preview.board.categories.map((category, categoryIndex) => (
+            <section key={category.id || `${category.name}-${categoryIndex}`} className="ai-preview-category">
+              <div className="ai-preview-category-header">
+                <h4>{category.name}</h4>
+                <button className="mini-button" type="button" onClick={() => onEditCategory(category)}>Editar</button>
+              </div>
+              <div className="tile-grid large ai-preview-grid">
+                {category.tiles.map((item, index) => (
+                  <article className="comm-tile motion-stagger-item" key={item.id} style={{ "--tile-color": item.color, "--stagger-index": index }}>
+                    <button className="tile-play" type="button" onClick={() => onTilePlay(item)}>
+                      <span className="tile-image"><TileImage src={item.image} /></span>
+                      <strong>{item.label}</strong>
+                    </button>
+                    <div className="tile-tools">
+                      <button className="mini-button" type="button" aria-label={`Editar ${item.label}`} title="Editar" onClick={() => onEditTile(category.id, item)}>
+                        <Pencil size={16} />
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ))}
+
+          <div className="ai-refine-box">
+            <label htmlFor="ai-refine">Refinar tablero</label>
+            <textarea
+              id="ai-refine"
+              value={refinePrompt}
+              onChange={(event) => setRefinePrompt(event.target.value)}
+              placeholder="Ejemplo: Hazlo más sencillo y deja solo 8 tarjetas."
+              rows={3}
+            />
+            <div className="modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setRefinePrompt("")}>Limpiar</button>
+              <button type="button" className="primary-button" disabled={!refinePrompt.trim() || isLoading} onClick={() => { onRefine(refinePrompt); setRefinePrompt(""); }}>
+                {isLoading ? "Actualizando..." : "Aplicar cambio"}
+              </button>
+            </div>
+          </div>
+
+          {error ? <p className="auth-error">{error}</p> : null}
+          {isLoading ? <p className="ai-loading-status">{status}</p> : null}
+        </div>
+      )}
+    </Modal>
   );
 }
 

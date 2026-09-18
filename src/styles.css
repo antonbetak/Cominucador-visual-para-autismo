@@ -752,6 +752,113 @@ button:disabled {
   color: #a3222e;
 }
 
+.ai-board-form,
+.ai-board-preview {
+  display: grid;
+  gap: 16px;
+}
+
+.ai-board-description {
+  margin: 0;
+  color: #465568;
+  line-height: 1.5;
+}
+
+.ai-board-form textarea,
+.ai-board-preview textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  border: 2px solid #dfeaf4;
+  border-radius: 16px;
+  background: #f9fbff;
+  padding: 14px 16px;
+  color: #17212b;
+}
+
+.quick-example-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.quick-chip {
+  border: 1px solid #dfeaf4;
+  background: #fff;
+  color: #1f2933;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 0.88rem;
+}
+
+.ai-preview-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ai-preview-header h3 {
+  margin: 0 0 6px;
+  font-size: clamp(1.25rem, 3vw, 1.7rem);
+}
+
+.ai-preview-header p {
+  margin: 0;
+  color: #53657b;
+}
+
+.ai-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ai-preview-category {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  background: #f6f9ff;
+  border: 1px solid #e9f0f8;
+}
+
+.ai-preview-category-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ai-preview-category-header h4 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.ai-preview-grid {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.ai-refine-box {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  background: #fffdfa;
+  border: 1px solid #f3e9ad;
+}
+
+.ai-refine-box label {
+  font-weight: 700;
+}
+
+.ai-loading-status {
+  margin: 0;
+  color: #45657c;
+  font-weight: 600;
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -2165,6 +2272,19 @@ input[type="checkbox"] {
     gap: 8px;
     align-items: end;
     margin-bottom: 10px;
+  }
+
+  .ai-preview-header,
+  .ai-preview-category-header,
+  .ai-preview-actions,
+  .modal-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ai-preview-actions > *,
+  .modal-actions > * {
+    width: 100%;
   }
 
   .content-header .primary-button {

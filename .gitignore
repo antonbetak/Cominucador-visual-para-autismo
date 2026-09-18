@@ -1,7 +1,11 @@
 node_modules
 dist
+.wrangler/
 .DS_Store
 .env
+.env.*
 .env.local
+.dev.vars
+.dev.vars.*
 firebase-debug.log
 functions/.secret.local
