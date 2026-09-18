@@ -1,5 +1,7 @@
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
 const GEMINI_MODEL_CANDIDATES = [GEMINI_MODEL];
+const GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
+const NUNU_TTS_VOICE = "Leda";
 
 const ALLOWED_ORIGINS = [
   "http://localhost:5173",
@@ -57,6 +59,93 @@ function buildCorsHeaders(origin) {
   }
 
   return headers;
+}
+
+function createWavFromPcm16(pcmBytes, sampleRate = 24000, channels = 1) {
+  const header = new ArrayBuffer(44);
+  const view = new DataView(header);
+  const writeText = (offset, value) => {
+    for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
+  };
+  const byteRate = sampleRate * channels * 2;
+  const blockAlign = channels * 2;
+
+  writeText(0, "RIFF");
+  view.setUint32(4, 36 + pcmBytes.byteLength, true);
+  writeText(8, "WAVE");
+  writeText(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);
+  writeText(36, "data");
+  view.setUint32(40, pcmBytes.byteLength, true);
+
+  const wav = new Uint8Array(44 + pcmBytes.byteLength);
+  wav.set(new Uint8Array(header), 0);
+  wav.set(pcmBytes, 44);
+  return wav;
+}
+
+function base64ToBytes(value) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+async function generateSpeech({ apiKey, text, voiceStyle = "child", origin = "" }) {
+  const stylePrompt = voiceStyle === "child"
+    ? "Usa una voz infantil, pequeña y juvenil, relativamente aguda, cálida, cercana, amable y natural. Articula claramente, habla ligeramente despacio y mantén una entonación expresiva pero tranquila. No suenes adulta, como locutor, corporativa, robótica, exagerada ni caricaturesca."
+    : "Usa una voz cálida, natural, clara y tranquila.";
+  const prompt = `Pronuncia exactamente la frase siguiente en español de México. ${stylePrompt} No respondas al significado. No agregues palabras, introducciones ni explicaciones. No reformules ni traduzcas. Pronuncia únicamente: ${text}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseModalities: ["AUDIO"],
+        speechConfig: {
+          languageCode: "es-MX",
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: NUNU_TTS_VOICE } },
+        },
+      },
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data?.error?.message || "Gemini TTS request failed");
+    error.status = response.status;
+    throw error;
+  }
+
+  const inlineData = data?.candidates?.[0]?.content?.parts?.find((part) => part?.inlineData)?.inlineData;
+  if (!inlineData?.data) throw new Error("Gemini TTS returned no audio");
+  const audioBytes = base64ToBytes(inlineData.data);
+  const mimeType = String(inlineData.mimeType || "").toLowerCase();
+  let wavBytes;
+  if (mimeType.startsWith("audio/l16")) {
+    const sampleRate = Number(mimeType.match(/rate=(\d+)/)?.[1] || 24000);
+    const channels = Number(mimeType.match(/channels=(\d+)/)?.[1] || 1);
+    wavBytes = createWavFromPcm16(audioBytes, sampleRate, channels);
+  } else if (mimeType === "audio/wav" || mimeType === "audio/x-wav") {
+    wavBytes = audioBytes;
+  } else {
+    throw new Error(`Unsupported Gemini TTS audio format: ${inlineData.mimeType || "unknown"}`);
+  }
+  return new Response(wavBytes, {
+    status: 200,
+    headers: {
+      "Content-Type": "audio/wav",
+      "Cache-Control": "private, max-age=3600",
+      ...buildCorsHeaders(origin),
+    },
+  });
 }
 
 function sanitizePrompt(prompt) {
@@ -292,6 +381,50 @@ export default {
     }
 
     try {
+      if (new URL(request.url).pathname === "/api/generate-speech") {
+        const contentType = request.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+          return new Response(JSON.stringify({ error: "Invalid content type" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...buildCorsHeaders(origin) },
+          });
+        }
+
+        const body = await request.json();
+        const text = typeof body?.text === "string" ? body.text.trim() : "";
+        const voiceStyle = typeof body?.voiceStyle === "string" ? body.voiceStyle.trim() : "child";
+        if (!text) {
+          return new Response(JSON.stringify({ error: "Text requerido" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...buildCorsHeaders(origin) },
+          });
+        }
+        if (text.length > 300) {
+          return new Response(JSON.stringify({ error: "Text demasiado largo" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...buildCorsHeaders(origin) },
+          });
+        }
+
+        const apiKey = env.GEMINI_API_KEY;
+        if (!apiKey) {
+          return new Response(JSON.stringify({ error: "Servicio no disponible" }), {
+            status: 503,
+            headers: { "Content-Type": "application/json", ...buildCorsHeaders(origin) },
+          });
+        }
+
+        try {
+          return await generateSpeech({ apiKey, text, voiceStyle, origin });
+        } catch (error) {
+          const status = [400, 401, 403, 429].includes(error?.status) ? error.status : 502;
+          return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "No pude generar la voz" }), {
+            status,
+            headers: { "Content-Type": "application/json", ...buildCorsHeaders(origin) },
+          });
+        }
+      }
+
       const contentType = request.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
         return new Response(JSON.stringify({ error: "Invalid content type" }), {

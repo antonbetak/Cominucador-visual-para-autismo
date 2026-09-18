@@ -4,6 +4,10 @@
     {
       "source": "/api/generate-board",
       "destination": "https://nunu-ai-worker.antonbetak.workers.dev/api/generate-board"
+    },
+    {
+      "source": "/api/generate-speech",
+      "destination": "https://nunu-ai-worker.antonbetak.workers.dev/api/generate-speech"
     }
   ]
 }

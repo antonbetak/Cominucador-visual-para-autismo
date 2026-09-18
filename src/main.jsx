@@ -36,6 +36,7 @@ import {
   X,
 } from "lucide-react";
 import { auth, db, googleProvider, isFirebaseConfigured } from "./firebase";
+import { playGeneratedSpeech, stopGeneratedSpeech } from "./services/ttsService";
 import "./styles.css";
 import logoNunuUrl from "../logo_nunu.jpeg";
 
@@ -1174,6 +1175,19 @@ function App() {
     window.speechSynthesis.speak(utterance);
   }
 
+  async function playSpeech(text) {
+    const normalizedText = String(text || "").trim();
+    if (!normalizedText) return;
+    window.speechSynthesis.cancel();
+    try {
+      const played = await playGeneratedSpeech(normalizedText);
+      if (!played) return;
+    } catch (error) {
+      console.warn("Gemini TTS unavailable; using SpeechSynthesis fallback.", error);
+      speak(normalizedText);
+    }
+  }
+
   function playTile(tileItem) {
     if (phraseItemsRef.current.length >= MAX_PHRASE_ITEMS) {
       setPhraseLimitKey((current) => current + 1);
@@ -1183,10 +1197,12 @@ function App() {
       setPhrase(nextPhrase);
     }
     if (tileItem.audio) {
+      window.speechSynthesis.cancel();
+      stopGeneratedSpeech();
       playAudioSource(tileItem.audio);
       return;
     }
-    speak(tileItem.phrase || tileItem.label);
+    void playSpeech(tileItem.phrase || tileItem.label);
   }
 
   function handleTilePress(tileItem) {
@@ -1730,7 +1746,7 @@ function App() {
           phraseItems={phrase}
           phraseText={phraseText}
           limitPulseKey={phraseLimitKey}
-          onPlay={() => speak(phraseText)}
+          onPlay={() => playSpeech(phraseText)}
           onRemoveLast={(itemKey) => setPhrase((current) => current.filter((item, index) => `${item.id}-${index}` !== itemKey))}
           onClear={() => setPhrase([])}
         />
