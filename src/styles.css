@@ -37,6 +37,14 @@ button {
   cursor: pointer;
 }
 
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #1f6f8b;
+  outline-offset: 3px;
+}
+
 button:not(.tile-play):not(:disabled) {
   transition: transform var(--nunu-motion-fast) var(--nunu-ease-out), box-shadow var(--nunu-motion-fast) var(--nunu-ease-out), background-color var(--nunu-motion-fast) ease;
   transform-origin: center;
@@ -783,6 +791,7 @@ button:disabled {
 }
 
 .quick-chip {
+  min-height: 44px;
   border: 1px solid #dfeaf4;
   background: #fff;
   color: #1f2933;
@@ -1237,6 +1246,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  width: min(100%, 1560px);
+  justify-self: center;
   min-height: 100vh;
   min-height: 100dvh;
   padding: 20px clamp(16px, 3vw, 36px) 36px;
@@ -2065,6 +2076,12 @@ input[type="checkbox"] {
   }
 }
 
+@media (min-width: 700px) {
+  .board-library-list {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  }
+}
+
 @media (max-width: 820px) {
   .app-shell {
     align-content: start;
@@ -2123,6 +2140,7 @@ input[type="checkbox"] {
     position: sticky;
     top: env(safe-area-inset-top, 0px);
     padding: 8px 0 12px;
+    scroll-margin-top: env(safe-area-inset-top, 0px);
   }
 
   .phrase-output {
@@ -2227,6 +2245,7 @@ input[type="checkbox"] {
   }
 
   .workspace {
+    width: 100%;
     min-height: auto;
     padding: 8px max(12px, env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
   }
