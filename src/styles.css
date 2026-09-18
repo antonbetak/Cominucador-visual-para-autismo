@@ -3058,3 +3058,136 @@ input[type="checkbox"] {
     flex: none;
   }
 }
+
+/* =========================================================
+   CREAR TABLERO CON IA — ESPACIADO FINAL
+   ========================================================= */
+
+.ai-board-form {
+  width: 100%;
+  box-sizing: border-box;
+
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+
+  padding: 26px 32px 30px;
+}
+
+/* Texto introductorio */
+.ai-board-form .ai-board-description {
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Prompt */
+.ai-board-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+
+  min-height: 190px;
+  padding: 20px 22px;
+
+  line-height: 1.5;
+  resize: vertical;
+}
+
+/* Aviso de privacidad */
+.ai-board-form .field-hint {
+  margin: -2px 0 2px;
+  line-height: 1.4;
+}
+
+/* Ejemplos */
+.ai-board-form .quick-example-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+
+  gap: 12px;
+  width: 100%;
+}
+
+.ai-board-form .quick-chip {
+  min-height: 44px;
+  padding: 9px 16px;
+
+  white-space: nowrap;
+}
+
+/* Error, si aparece */
+.ai-board-form .auth-error {
+  margin: 0;
+}
+
+/* Botones inferiores */
+.ai-board-form > .modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+
+  margin-top: 2px;
+  padding: 20px 0 0;
+
+  border-top: 1px solid rgba(30, 66, 85, 0.1);
+}
+
+.ai-board-form > .modal-actions button {
+  min-height: 48px;
+  padding-inline: 22px;
+}
+
+/* Tablet */
+@media (max-width: 900px) {
+  .ai-board-form {
+    padding: 22px 24px 26px;
+    gap: 18px;
+  }
+
+  .ai-board-form textarea {
+    min-height: 170px;
+  }
+}
+
+/* Móvil */
+@media (max-width: 640px) {
+  .ai-board-form {
+    padding: 18px 16px 22px;
+    gap: 16px;
+  }
+
+  .ai-board-form textarea {
+    min-height: 150px;
+    padding: 16px;
+    font-size: 16px;
+  }
+
+  .ai-board-form .quick-example-row {
+    gap: 8px;
+  }
+
+  .ai-board-form .quick-chip {
+    padding-inline: 13px;
+  }
+
+  .ai-board-form > .modal-actions {
+    padding-top: 16px;
+  }
+
+  .ai-board-form > .modal-actions button {
+    flex: 1 1 0;
+  }
+}
+
+/* Celular muy pequeño */
+@media (max-width: 380px) {
+  .ai-board-form > .modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .ai-board-form > .modal-actions button {
+    width: 100%;
+    flex: none;
+  }
+}
