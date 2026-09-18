@@ -2659,3 +2659,402 @@ input[type="checkbox"] {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+/* =========================================================
+   HOTFIX — MIS TABLEROS
+   Evita cards comprimidas y texto letra por letra
+   ========================================================= */
+
+.board-library-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  width: 100%;
+}
+
+.board-library-item,
+.board-library-card {
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.board-library-content {
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.board-library-content h3,
+.board-library-content h4,
+.board-library-content p,
+.board-library-title,
+.board-library-description {
+  width: 100%;
+  min-width: 0;
+
+  /* IMPORTANTE: no romper palabras letra por letra */
+  word-break: normal;
+  overflow-wrap: break-word;
+  white-space: normal;
+}
+
+.board-library-actions {
+  width: 100%;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: auto;
+}
+
+.board-library-actions button {
+  flex: 1 1 120px;
+  min-width: 0;
+  min-height: 44px;
+}
+
+/* Móvil */
+@media (max-width: 699px) {
+  .board-library-list {
+    grid-template-columns: 1fr;
+  }
+
+  .board-library-actions {
+    width: 100%;
+  }
+
+  .board-library-actions button {
+    flex: 1 1 0;
+  }
+}
+
+/* Tablet */
+@media (min-width: 700px) and (max-width: 1099px) {
+  .board-library-list {
+    grid-template-columns: repeat(
+      auto-fit,
+      minmax(min(100%, 300px), 1fr)
+    );
+  }
+}
+
+/* Desktop */
+@media (min-width: 1100px) {
+  .board-library-list {
+    grid-template-columns: repeat(
+      auto-fit,
+      minmax(320px, 1fr)
+    );
+  }
+}
+/* =========================================================
+   MIS TABLEROS — ESPACIADO FINAL
+   ========================================================= */
+
+/* El grid ya no toca los bordes del modal */
+.board-library-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+
+  /* ESTE ES EL CAMBIO IMPORTANTE */
+  padding: 24px 32px 32px;
+
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Cards */
+.board-library-item,
+.board-library-card {
+  width: 100%;
+  min-width: 0;
+  min-height: 250px;
+
+  display: flex;
+  flex-direction: column;
+
+  padding: 26px 28px;
+  gap: 14px;
+
+  border-radius: 16px;
+  box-sizing: border-box;
+}
+
+/* Información */
+.board-library-content {
+  width: 100%;
+  min-width: 0;
+
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+
+  flex: 1;
+}
+
+.board-library-title,
+.board-library-content h3,
+.board-library-content h4 {
+  margin: 0;
+  line-height: 1.25;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.board-library-description,
+.board-library-content p {
+  margin: 0;
+  line-height: 1.5;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+/* Metadata */
+.board-library-meta {
+  margin-top: 4px;
+}
+
+/* Botones al fondo */
+.board-library-actions {
+  width: 100%;
+
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+.board-library-actions button {
+  min-height: 48px;
+  padding-inline: 22px;
+  border-radius: 12px;
+}
+
+/* Tablet */
+@media (max-width: 900px) {
+  .board-library-list {
+    grid-template-columns: 1fr;
+    padding: 22px 24px 28px;
+  }
+
+  .board-library-item,
+  .board-library-card {
+    min-height: auto;
+  }
+}
+
+/* Móvil */
+@media (max-width: 640px) {
+  .board-library-list {
+    padding: 18px 16px 22px;
+    gap: 16px;
+  }
+
+  .board-library-item,
+  .board-library-card {
+    padding: 20px;
+  }
+
+  .board-library-actions {
+    flex-wrap: wrap;
+  }
+
+  .board-library-actions button {
+    flex: 1 1 120px;
+  }
+}
+/* =========================================================
+   MIS TABLEROS — POLISH FINAL CON SELECTORES REALES
+   ========================================================= */
+
+.board-library {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 26px 32px 32px;
+}
+
+/* Encabezado: descripción + contador */
+.board-library-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+
+  margin-bottom: 26px;
+}
+
+.board-library-heading .ai-board-description {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.board-library-count {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+/* Grid */
+.board-library-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+
+  width: 100%;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Cada tablero */
+.board-library-card {
+  width: 100%;
+  min-width: 0;
+
+  display: flex;
+  flex-direction: column;
+
+  padding: 26px 28px;
+  gap: 20px;
+
+  border-radius: 16px;
+  box-sizing: border-box;
+}
+
+/* Contenido textual */
+.board-library-card-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* Título */
+.board-library-card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  width: 100%;
+  min-width: 0;
+}
+
+.board-library-card-title svg {
+  flex: 0 0 auto;
+}
+
+.board-library-card-title h4 {
+  margin: 0;
+  min-width: 0;
+
+  line-height: 1.25;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+/* Descripción */
+.board-library-card-copy > p {
+  margin: 0;
+
+  line-height: 1.5;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+/* Generado con IA / fecha */
+.board-library-card-copy > span {
+  display: block;
+  margin-top: 2px;
+  line-height: 1.35;
+}
+
+/* Botones */
+.board-library-card-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+
+  width: 100%;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.board-library-card-actions button {
+  min-height: 48px;
+  padding: 0 22px;
+  border-radius: 12px;
+}
+
+/* Abrir un poco más grande que Eliminar */
+.board-library-card-actions .primary-button {
+  min-width: 150px;
+}
+
+.board-library-card-actions .danger-button {
+  min-width: 120px;
+}
+
+/* Tablet */
+@media (max-width: 900px) {
+  .board-library {
+    padding: 22px 24px 28px;
+  }
+
+  .board-library-list {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+}
+
+/* Móvil */
+@media (max-width: 640px) {
+  .board-library {
+    padding: 18px 16px 22px;
+  }
+
+  .board-library-heading {
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+
+  .board-library-card {
+    padding: 20px;
+    gap: 16px;
+  }
+
+  .board-library-card-actions {
+    gap: 10px;
+  }
+
+  .board-library-card-actions button {
+    flex: 1 1 120px;
+    min-width: 0;
+  }
+}
+
+/* Celulares muy pequeños */
+@media (max-width: 380px) {
+  .board-library-heading {
+    flex-direction: column;
+  }
+
+  .board-library-card-actions {
+    flex-direction: column;
+  }
+
+  .board-library-card-actions button {
+    width: 100%;
+    flex: none;
+  }
+}
