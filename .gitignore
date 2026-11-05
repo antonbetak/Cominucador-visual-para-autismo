@@ -9,3 +9,5 @@ dist
 .dev.vars.*
 firebase-debug.log
 functions/.secret.local
+.vercel
+.env*

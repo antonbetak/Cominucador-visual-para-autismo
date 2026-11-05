@@ -36,7 +36,7 @@ import {
   X,
 } from "lucide-react";
 import { auth, db, googleProvider, isFirebaseConfigured } from "./firebase";
-import { playGeneratedSpeech, stopGeneratedSpeech } from "./services/ttsService";
+import { playGeneratedSpeech, stopGeneratedSpeech, playRecordedSpeech, prefetchGeneratedSpeech, invalidateGeneratedSpeech } from "./services/ttsService";
 import "./styles.css";
 import logoNunuUrl from "../logo_nunu.jpeg";
 
@@ -443,8 +443,7 @@ function getSupportedAudioMimeType() {
 }
 
 function playAudioSource(source) {
-  const audio = new Audio(source);
-  audio.play().catch(() => {
+  void playRecordedSpeech(source).catch(() => {
     alert("No se pudo reproducir esta grabación en este navegador.");
   });
 }
@@ -944,7 +943,6 @@ function App() {
   const [boardLibrary, setBoardLibrary] = useState([]);
   const [editingChild, setEditingChild] = useState(null);
   const [cloudStatus, setCloudStatus] = useState("");
-  const [voices, setVoices] = useState([]);
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiError, setAiError] = useState("");
@@ -1154,38 +1152,23 @@ function App() {
     };
   }, [authUser, activeChildId, board.categories.length]);
 
-  useEffect(() => {
-    const loadVoices = () => setVoices(window.speechSynthesis?.getVoices?.() || []);
-    loadVoices();
-    window.speechSynthesis?.addEventListener?.("voiceschanged", loadVoices);
-    return () => window.speechSynthesis?.removeEventListener?.("voiceschanged", loadVoices);
-  }, []);
-
   const phraseText = useMemo(() => phrase.map((item) => item.phrase || item.label).join(" "), [phrase]);
 
-  function speak(text) {
-    if (!text.trim()) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "es-MX";
-    utterance.rate = board.settings.voiceRate;
-    utterance.pitch = board.settings.voicePitch;
-    const spanishVoice = voices.find((voice) => voice.lang?.toLowerCase().startsWith("es"));
-    if (spanishVoice) utterance.voice = spanishVoice;
-    window.speechSynthesis.speak(utterance);
-  }
+  useEffect(() => {
+    if (authLoading || !authUser || !children.length) return;
+    return prefetchGeneratedSpeech((activeCategory?.tiles || [])
+      .filter((item) => !item.audio)
+      .map((item) => item.phrase || item.label));
+  }, [activeCategory, authLoading, authUser?.uid, children.length]);
 
-  async function playSpeech(text) {
-    const normalizedText = String(text || "").trim();
-    if (!normalizedText) return;
-    window.speechSynthesis.cancel();
-    try {
-      const played = await playGeneratedSpeech(normalizedText);
-      if (!played) return;
-    } catch (error) {
-      console.warn("Gemini TTS unavailable; using SpeechSynthesis fallback.", error);
-      speak(normalizedText);
-    }
+  useEffect(() => () => stopGeneratedSpeech(), [activeChildId, activeCategoryId, authUser?.uid, currentBoardId]);
+
+  function playSpeech(text) {
+    return playGeneratedSpeech(text, {
+      rate: board.settings.voiceRate,
+      pitch: board.settings.voicePitch,
+      preferSpeed: true,
+    });
   }
 
   function playTile(tileItem) {
@@ -1197,7 +1180,6 @@ function App() {
       setPhrase(nextPhrase);
     }
     if (tileItem.audio) {
-      window.speechSynthesis.cancel();
       stopGeneratedSpeech();
       playAudioSource(tileItem.audio);
       return;
@@ -1242,6 +1224,11 @@ function App() {
   }
 
   function saveTile(categoryId, nextTile) {
+    const previous = board.categories.find((category) => category.id === categoryId)?.tiles.find((item) => item.id === nextTile.id);
+    const previousText = previous?.phrase || previous?.label;
+    if (previousText && previousText.trim() !== (nextTile.phrase || nextTile.label || "").trim()) {
+      void invalidateGeneratedSpeech(previousText);
+    }
     setBoard((current) => ({
       ...current,
       categories: current.categories.map((category) => {
@@ -1792,7 +1779,7 @@ function App() {
                   <button className="mini-button" aria-label={`Editar ${item.label}`} title="Editar" onClick={() => setEditingTile({ categoryId: activeCategory.id, tile: item })}>
                     <Pencil size={16} />
                   </button>
-                  <button className="mini-button" aria-label={`Escuchar ${item.label}`} title="Escuchar" onClick={() => (item.audio ? playAudioSource(item.audio) : speak(item.phrase || item.label))}>
+                  <button className="mini-button" aria-label={`Escuchar ${item.label}`} title="Escuchar" onClick={() => (item.audio ? playAudioSource(item.audio) : playSpeech(item.phrase || item.label))}>
                     <Play size={16} />
                   </button>
                 </div>

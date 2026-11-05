@@ -7,6 +7,7 @@ const ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://localhost:4173",
   "https://comunicador-visual-nunu.vercel.app",
+  "https://cominucador-visual-nunu.vercel.app",
 ];
 
 const boardSchema = {
@@ -103,6 +104,7 @@ async function generateSpeech({ apiKey, text, voiceStyle = "child", origin = "" 
     : "Usa una voz cálida, natural, clara y tranquila.";
   const prompt = `Pronuncia exactamente la frase siguiente en español de México. ${stylePrompt} No respondas al significado. No agregues palabras, introducciones ni explicaciones. No reformules ni traduzcas. Pronuncia únicamente: ${text}`;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const generationStarted = performance.now();
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -118,6 +120,8 @@ async function generateSpeech({ apiKey, text, voiceStyle = "child", origin = "" 
     }),
   });
   const data = await response.json().catch(() => ({}));
+  const generationMs = performance.now() - generationStarted;
+  const encodingStarted = performance.now();
   if (!response.ok) {
     const error = new Error(data?.error?.message || "Gemini TTS request failed");
     error.status = response.status;
@@ -142,6 +146,8 @@ async function generateSpeech({ apiKey, text, voiceStyle = "child", origin = "" 
     status: 200,
     headers: {
       "Content-Type": "audio/wav",
+      "Server-Timing": `gemini;dur=${generationMs.toFixed(1)}, encoding;dur=${(performance.now() - encodingStarted).toFixed(1)}`,
+      "Access-Control-Expose-Headers": "Server-Timing",
       "Cache-Control": "private, max-age=3600",
       ...buildCorsHeaders(origin),
     },
