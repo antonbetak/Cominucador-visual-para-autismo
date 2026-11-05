@@ -244,7 +244,7 @@ function speakFallback(text, options, token, started) {
     const timer = setTimeout(() => {
       try { speechSynthesis.cancel(); } catch { /* Best effort. */ }
       settle(false);
-    }, FALLBACK_START_TIMEOUT);
+    }, options.fallbackTimeoutMs ?? FALLBACK_START_TIMEOUT);
     utterance.onstart = () => {
       if (token !== sequence) {
         try { speechSynthesis.cancel(); } catch { /* Best effort. */ }
@@ -257,8 +257,11 @@ function speakFallback(text, options, token, started) {
     // Ending without a start event is not a successful playback.
     utterance.onend = () => settle(false);
     activeFallback = { utterance, settle };
-    try { speechSynthesis.speak(utterance); }
-    catch { settle(false); }
+    try {
+      speechSynthesis.speak(utterance);
+      // Chrome can leave the queue paused after cancel(); resume() unsticks it.
+      speechSynthesis.resume?.();
+    } catch { settle(false); }
   });
 }
 async function playBlob(source, token, started, sourceName) {
@@ -275,7 +278,16 @@ async function playBlob(source, token, started, sourceName) {
   audio.onended = release;
   audio.onerror = release;
   try { await audio.play(); return token === sequence; }
-  catch (error) { if (token !== sequence) return false; releaseAudio(); throw speechError(error.name === "NotAllowedError" ? "blocked" : "playback", "playback"); }
+  catch (error) {
+    if (token !== sequence) return false;
+    // MediaError 3 (decode) or 4 (src not supported) confirm the audio itself is unusable;
+    // anything else (e.g. an interrupted play) is transient and must not evict a good cache entry.
+    const mediaCode = audio.error?.code;
+    releaseAudio();
+    if (error.name === "NotAllowedError") throw speechError("blocked", "playback");
+    const corrupt = error.name === "NotSupportedError" || mediaCode === 3 || mediaCode === 4;
+    throw Object.assign(speechError(corrupt ? "format" : "playback", "playback"), { corrupt });
+  }
 }
 export async function playRecordedSpeech(source) {
   stopGeneratedSpeech();
@@ -307,6 +319,18 @@ export async function playGeneratedSpeech(text, options = {}) {
       remember(keyFor(text), cached);
       return await playBlob(cached, token, started, "memory");
     }
+    if (getQuotaUntil() > Date.now() && !pending.has(keyFor(text))) {
+      // Known quota block: no request can succeed, so do not wait on the network.
+      // A saved Leda still wins; otherwise the emergency voice starts near the tap,
+      // before the browser can drop the user activation during a network wait.
+      const saved = await readCached(text);
+      if (token !== sequence) return false;
+      if (saved) return await playBlob(saved.blob, token, started, saved.source);
+      if (await speakFallback(text, options, token, started)) return true;
+      if (token !== sequence) return false;
+      options.onError?.({ code: "quota", stage: "generation", status: 429, retryAt: getQuotaUntil() });
+      return false;
+    }
     prepareAudio(token);
     foregroundRequests += 1;
     let result;
@@ -319,6 +343,7 @@ export async function playGeneratedSpeech(text, options = {}) {
     return played && token === sequence;
   } catch (error) {
     if (token !== sequence) return false;
+    let failure = error;
     // Recheck the cache: another tab or a finishing request may have stored Leda.
     // A rejected play must not retry automatically (Safari may require another tap).
     if (error?.stage !== "playback") {
@@ -326,18 +351,26 @@ export async function playGeneratedSpeech(text, options = {}) {
       if (token !== sequence) return false;
       if (recovered) {
         try { return await playBlob(recovered.blob, token, started, recovered.source); }
-        catch { /* Report a controlled failure below. */ }
+        catch (replayError) {
+          if (token !== sequence) return false;
+          failure = replayError; // The real problem is now playing the saved audio.
+        }
       }
     }
     if (token !== sequence) return false;
     releaseAudio();
-    measure("error", started, { source: "tts", code: error.code || "unknown", failureStage: error.stage || "unknown", status: error.status || 0, retryAt: error.retryAt || 0 });
-    // The emergency voice is automatic: a Gemini failure (quota, network, error or timeout)
-    // must never leave Nunu silent. A local playback block keeps the retry notice instead
-    // of replacing Leda audio that is already available on this device.
-    if (error?.stage !== "playback" && await speakFallback(text, options, token, started)) return true;
+    if (failure?.corrupt) {
+      // Confirmed undecodable audio: evict only that entry so a later tap regenerates Leda.
+      await invalidateGeneratedSpeech(text);
+      if (token !== sequence) return false;
+    }
+    measure("error", started, { source: "tts", code: failure.code || "unknown", failureStage: failure.stage || "unknown", status: failure.status || 0, retryAt: failure.retryAt || 0 });
+    // An autoplay block keeps the retry notice: a real tap on Reintentar plays the saved
+    // audio. Every other failure (quota, network, timeout, undecodable audio) speaks with
+    // the local emergency voice so a recoverable error never leaves the card silent.
+    if (failure?.code !== "blocked" && await speakFallback(text, options, token, started)) return true;
     if (token !== sequence) return false;
-    options.onError?.({ code: error.code || "unknown", stage: error.stage || "unknown", status: error.status || 0, retryAt: error.retryAt || 0 });
+    options.onError?.({ code: failure.code || "unknown", stage: failure.stage || "unknown", status: failure.status || 0, retryAt: failure.retryAt || 0 });
     return false;
   }
 }

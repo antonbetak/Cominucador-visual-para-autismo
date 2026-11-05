@@ -10,11 +10,13 @@ let utterances = [];
 let played = [];
 let requests = [];
 let rejectPlayback = false;
+let rejectDecode = false;
 // "start": the utterance starts; "error": onerror fires; "never": the browser drops it without events.
 let speechMode = "start";
 const cancelledUtterances = new Set();
 globalThis.speechSynthesis = {
   cancel() { for (const utterance of utterances) cancelledUtterances.add(utterance); },
+  resume() {},
   getVoices: () => [],
   speak: (utterance) => {
     utterances.push(utterance);
@@ -34,10 +36,14 @@ globalThis.Audio = class {
   load() {}
   pause() {}
   async play() {
-    if (!this.src?.startsWith("data:")) {
-      if (rejectPlayback) throw new DOMException("Tap required", "NotAllowedError");
-      played.push(this.src);
+    if (this.src?.startsWith("data:")) return;
+    if (rejectPlayback) throw new DOMException("Tap required", "NotAllowedError");
+    if (rejectDecode) {
+      this.error = { code: 4 }; // MEDIA_ERR_SRC_NOT_SUPPORTED
+      throw new DOMException("The element has no supported sources", "NotSupportedError");
     }
+    this.error = null;
+    played.push(this.src);
   }
 };
 globalThis.fetch = () => new Promise((resolve, reject) => {
@@ -221,6 +227,21 @@ test('the emergency voice reports success only when speech actually starts', asy
   } finally { speechMode = "start"; }
 });
 
+test('a local voice that never starts reports failure and cancels the utterance', async () => {
+  speechMode = "never";
+  try {
+    const before = spoken.length;
+    let failure;
+    const result = tts.playGeneratedSpeech('voz muda', { fallbackTimeoutMs: 60, onError: (error) => { failure = error; } });
+    await waitRequests();
+    requests.shift()(new Response('', { status: 503 }));
+    assert.equal(await result, false); // never started: not a success
+    assert.equal(spoken.length, before);
+    assert.equal(failure.status, 503); // the caregiver keeps the retry notice
+    assert.ok(cancelledUtterances.has(utterances.at(-1))); // the dropped utterance cannot speak late
+  } finally { speechMode = "start"; }
+});
+
 test('a new tap cancels a pending emergency voice and only the latest speaks', async () => {
   speechMode = "never";
   const a = tts.playGeneratedSpeech('primera local');
@@ -318,6 +339,52 @@ test('invalid network WAV is never played or cached; the emergency voice speaks 
   assert.equal(await next, true); // Leda on retry
   assert.equal(played.length, before + 1);
   assert.equal(spoken.length, beforeSpoken + 1);
+});
+
+test('undecodable cached audio is evicted, speaks locally and the next tap regenerates Leda', async () => {
+  // Seed a valid Leda audio through the normal generation path.
+  const seed = tts.playGeneratedSpeech('audio danado');
+  await waitRequests();
+  finish(requests.shift());
+  assert.equal(await seed, true);
+  const key = (await databaseOperation('readonly', store => store.getAll())).find(e => e.key.endsWith('|audio danado'))?.key;
+  assert.ok(key);
+  // The stored bytes no longer decode (e.g. an entry written by an old version).
+  rejectDecode = true;
+  const before = spoken.length;
+  assert.equal(await tts.playGeneratedSpeech('audio danado'), true); // emergency voice, not silence
+  assert.equal(spoken.length, before + 1);
+  assert.equal(spoken.at(-1), 'audio danado');
+  rejectDecode = false;
+  // Only that entry was evicted; other cached phrases are intact.
+  assert.equal(await databaseOperation('readonly', store => store.get(key)), undefined);
+  await tts.playGeneratedSpeech('segunda');
+  assert.equal(requests.length, 0);
+  // The next tap regenerates Leda instead of staying silent or local.
+  const regenerated = tts.playGeneratedSpeech('audio danado');
+  await waitRequests();
+  finish(requests.shift());
+  assert.equal(await regenerated, true);
+  assert.equal(spoken.length, before + 1);
+});
+
+test('an undecodable fresh generation is not kept and the emergency voice speaks', async () => {
+  rejectDecode = true;
+  const before = spoken.length;
+  const result = tts.playGeneratedSpeech('recien danado');
+  await waitRequests();
+  finish(requests.shift());
+  assert.equal(await result, true);
+  assert.equal(spoken.at(-1), 'recien danado');
+  rejectDecode = false;
+  await tick();
+  const entries = await databaseOperation('readonly', store => store.getAll());
+  assert.ok(!entries.some((entry) => entry.key.endsWith('|recien danado')));
+  const retry = tts.playGeneratedSpeech('recien danado');
+  await waitRequests();
+  finish(requests.shift());
+  assert.equal(await retry, true);
+  assert.equal(spoken.length, before + 1); // Leda again
 });
 
 test('corrupt IndexedDB entry is evicted before generating a replacement', async () => {
