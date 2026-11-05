@@ -14,6 +14,9 @@ let sequence = 0;
 let backgroundGenerations = 0;
 let backgroundQueue = Promise.resolve();
 let activeAudio;
+let reusableAudio;
+let foregroundRequests = 0;
+const diskReads = new Map();
 let activeUrl;
 const metrics = [];
 
@@ -25,6 +28,7 @@ function measure(stage, started, extra = {}) {
 }
 export const getSpeechMetrics = () => metrics.slice();
 const normalize = (text) => String(text || "").trim();
+const storedSize = (entry) => entry.blob?.size || entry.audio?.byteLength || 0;
 const keyFor = (text) => `${VERSION}|${normalize(text)}`;
 
 function openDatabase() {
@@ -69,6 +73,7 @@ async function persist(key, blob, revision) {
   const db = await openDatabase();
   if (!db || blob.size > MAX_BYTES || revisions.get(key) !== revision) return;
   try {
+    const audio = await blob.arrayBuffer();
     await new Promise((resolve) => {
       const tx = db.transaction("audio", "readwrite");
       const store = tx.objectStore("audio");
@@ -80,39 +85,62 @@ async function persist(key, blob, revision) {
           if (item.key === key || now - item.createdAt > MAX_AGE) { store.delete(item.key); return false; }
           return true;
         }).sort((a, b) => a.usedAt - b.usedAt);
-        let bytes = entries.reduce((sum, item) => sum + item.blob.size, blob.size);
+        let bytes = entries.reduce((sum, item) => sum + storedSize(item), blob.size);
         while (entries.length >= MAX_ENTRIES || bytes > MAX_BYTES) {
           const oldest = entries.shift();
           if (!oldest) break;
-          bytes -= oldest.blob.size;
+          bytes -= storedSize(oldest);
           store.delete(oldest.key);
         }
-        store.put({ key, blob, createdAt: now, usedAt: now });
+        store.put({ key, audio, mimeType: blob.type, createdAt: now, usedAt: now });
       };
       tx.oncomplete = tx.onabort = tx.onerror = resolve;
     });
   } catch { /* Storage is best effort. */ }
 }
-async function requestSpeech(text, background = false) {
+async function readCached(text) {
   const key = keyFor(text);
-  if (memory.has(key)) return memory.get(key);
-  if (pending.has(key)) return pending.get(key);
+  if (memory.has(key)) return { blob: memory.get(key), source: "memory" };
+  if (diskReads.has(key)) return diskReads.get(key);
   const revision = revisions.get(key);
   const task = (async () => {
-    const lookup = performance.now();
+    const started = performance.now();
     const saved = await storeOperation("readonly", (store) => store.get(key));
+    if (revisions.get(key) !== revision) return null;
+    if (!saved || !storedSize(saved) || Date.now() - saved.createdAt >= MAX_AGE) return null;
+    const blob = saved.blob || new Blob([saved.audio], { type: saved.mimeType || "audio/wav" });
+    remember(key, blob);
+    void storeOperation("readwrite", (store) => store.put({ ...saved, usedAt: Date.now() }));
+    measure("cache", started, { source: "indexeddb" });
+    return { blob, source: "indexeddb" };
+  })();
+  diskReads.set(key, task);
+  try { return await task; } finally { diskReads.delete(key); }
+}
+async function waitForForeground(promoted) {
+  while (foregroundRequests && !promoted()) await new Promise((resolve) => setTimeout(resolve, 25));
+}
+async function requestSpeech(text, background = false, cancelled = () => false) {
+  const key = keyFor(text);
+  if (memory.has(key)) return { blob: memory.get(key), source: "memory" };
+  if (pending.has(key)) {
+    const task = pending.get(key);
+    if (!background) task.promoted = true;
+    return task;
+  }
+  const revision = revisions.get(key);
+  const task = (async () => {
+    const saved = await readCached(text);
     if (revisions.get(key) !== revision) throw new Error("Invalidated speech");
-    if (saved && Date.now() - saved.createdAt < MAX_AGE && saved.blob?.size) {
-      if (revisions.get(key) === revision) {
-        remember(key, saved.blob);
-        void storeOperation("readwrite", (store) => store.put({ ...saved, usedAt: Date.now() }));
-      }
-      measure("cache", lookup, { source: "indexeddb" });
-      return saved.blob;
+    if (saved) return saved;
+    if (background) {
+      await waitForForeground(() => pending.get(key)?.promoted);
+      if (cancelled() && !pending.get(key)?.promoted) throw new Error("Cancelled preload");
     }
     if ((failures.get(key) || 0) > Date.now()) throw new Error("TTS cooldown");
-    if (background && backgroundGenerations >= 24) throw new Error("Background budget exhausted");
-    if (background) backgroundGenerations += 1;
+    const backgroundOnly = background && !pending.get(key)?.promoted;
+    if (backgroundOnly && backgroundGenerations >= 24) throw new Error("Background budget exhausted");
+    if (backgroundOnly) backgroundGenerations += 1;
     const started = performance.now();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20000);
@@ -127,12 +155,13 @@ async function requestSpeech(text, background = false) {
       const blob = await response.blob();
       if (!blob.size) throw new Error("Empty TTS audio");
       measure("download", download, { bytes: blob.size });
+      let persisted;
       if (revisions.get(key) === revision) {
         remember(key, blob);
-        void persist(key, blob, revision);
+        persisted = persist(key, blob, revision);
       }
       if (revisions.get(key) !== revision) throw new Error("Invalidated speech");
-      return blob;
+      return { blob, source: "generated", persisted };
     } catch (error) {
       failures.set(key, Date.now() + 60000);
       throw error;
@@ -143,7 +172,7 @@ async function requestSpeech(text, background = false) {
 }
 
 function releaseAudio() {
-  if (activeAudio) { activeAudio.pause(); activeAudio.removeAttribute("src"); activeAudio.load(); activeAudio = null; }
+  if (activeAudio) { activeAudio.onplaying = activeAudio.onended = activeAudio.onerror = null; activeAudio.pause(); activeAudio.removeAttribute("src"); activeAudio.load(); activeAudio = null; }
   if (activeUrl) { URL.revokeObjectURL(activeUrl); activeUrl = null; }
 }
 export function stopGeneratedSpeech() {
@@ -160,7 +189,7 @@ function speakFallback(text, options, token, started) {
   const voices = speechSynthesis.getVoices();
   utterance.voice = voices.find((voice) => voice.lang.toLowerCase() === "es-mx") || voices.find((voice) => voice.lang.toLowerCase().startsWith("es")) || null;
   utterance.onstart = () => {
-    if (token !== sequence) { speechSynthesis.cancel(); return; }
+    if (token !== sequence) return;
     measure("playback", started, { source: "speechSynthesis" });
   };
   speechSynthesis.speak(utterance);
@@ -168,17 +197,17 @@ function speakFallback(text, options, token, started) {
 }
 async function playBlob(source, token, started, sourceName) {
   if (token !== sequence) return false;
-  const audio = new Audio();
+  const audio = reusableAudio ||= new Audio();
   activeAudio = audio;
   if (typeof source === "string") audio.src = source;
   else { activeUrl = URL.createObjectURL(source); audio.src = activeUrl; }
-  audio.addEventListener("playing", () => {
+  audio.onplaying = () => {
     if (token !== sequence) { audio.pause(); return; }
     measure("playback", started, { source: sourceName });
-  }, { once: true });
+  };
   const release = () => { if (activeAudio === audio) releaseAudio(); };
-  audio.addEventListener("ended", release, { once: true });
-  audio.addEventListener("error", release, { once: true });
+  audio.onended = release;
+  audio.onerror = release;
   try { await audio.play(); return token === sequence; }
   catch (error) { if (token !== sequence) return false; releaseAudio(); throw error; }
 }
@@ -186,40 +215,78 @@ export async function playRecordedSpeech(source) {
   stopGeneratedSpeech();
   return playBlob(source, sequence, performance.now(), "recording");
 }
+// Reuse an element activated by the tap so asynchronous WAV playback can work on iOS.
+// This PCM WAV contains silence, not an audible waiting effect.
+function prepareAudio(token) {
+  const audio = reusableAudio ||= new Audio();
+  const silent = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQIAAAAAAA==";
+  activeAudio = audio;
+  audio.src = silent;
+  try {
+    void audio.play().then(() => {
+      if (token === sequence && audio.src === silent) audio.pause();
+    }).catch(() => {});
+  } catch { /* The eventual play reports any playback restriction to the caregiver. */ }
+}
 export async function playGeneratedSpeech(text, options = {}) {
   text = normalize(text);
   if (!text) return false;
   stopGeneratedSpeech();
   const token = sequence;
   const started = performance.now();
-  const blob = memory.get(keyFor(text));
-  if (blob) {
-    remember(keyFor(text), blob);
-    try { return await playBlob(blob, token, started, "memory"); }
-    catch { return speakFallback(text, options, token, started); }
-  }
-  // Invoke native speech inside the tap gesture (particularly important on iOS).
-  // Gemini warms the cache only; it never replaces an utterance already speaking.
-  const fallback = options.preferSpeed !== false && speakFallback(text, options, token, started);
+  if (options.retry === true) failures.delete(keyFor(text));
+  const cached = memory.get(keyFor(text));
   try {
-    const result = await requestSpeech(text);
-    if (fallback || token !== sequence) return Boolean(fallback);
-    return await playBlob(result, token, started, "generated");
-  } catch { return fallback || speakFallback(text, options, token, started); }
+    if (cached) {
+      remember(keyFor(text), cached);
+      return await playBlob(cached, token, started, "memory");
+    }
+    prepareAudio(token);
+    foregroundRequests += 1;
+    let result;
+    try { result = await requestSpeech(text); }
+    finally { foregroundRequests -= 1; }
+    if (token !== sequence) return false;
+    const played = await playBlob(result.blob, token, started, result.source);
+    // Begin sound immediately, but resolve this operation only once storage settles.
+    await result.persisted;
+    return played && token === sequence;
+  } catch (error) {
+    if (token !== sequence) return false;
+    // Recheck the cache: another tab or a finishing request may have stored Leda.
+    // A rejected play must not retry automatically (Safari may require another tap).
+    if (error?.name !== "NotAllowedError") {
+      const recovered = await readCached(text);
+      if (token !== sequence) return false;
+      if (recovered) {
+        try { return await playBlob(recovered.blob, token, started, recovered.source); }
+        catch { /* Report a controlled failure below. */ }
+      }
+    }
+    if (token !== sequence) return false;
+    releaseAudio();
+    measure("error", started, { source: "gemini", reason: error?.name || "Error" });
+    if (options.emergencyVoice === true && speakFallback(text, options, token, started)) return true;
+    options.onError?.();
+    return false;
+  }
 }
 export function prefetchGeneratedSpeech(texts) {
   let cancelled = false;
-  // One background request, at most 12 phrases per category visit, no whole-board preload.
-  const queue = [...new Set(texts.map(normalize))].filter((text) => text && text.length <= 300).slice(0, 12);
-  const timer = setTimeout(() => {
+  const all = [...new Set(texts.map(normalize))].filter((text) => text && text.length <= 300);
+  const isCancelled = () => cancelled || document.visibilityState === "hidden";
+  // Restore visible saved phrases immediately within the 48-entry memory budget.
+  const restored = Promise.all(all.slice(0, 48).map((text) => readCached(text)));
+  void restored.then(() => {
     backgroundQueue = backgroundQueue.then(async () => {
-      for (const text of queue) {
-        if (cancelled || document.visibilityState === "hidden") break;
-        try { await requestSpeech(text, true); } catch { break; }
+      const missing = all.filter((text) => !memory.has(keyFor(text))).slice(0, 12);
+      for (const text of missing) {
+        if (isCancelled()) break;
+        try { await requestSpeech(text, true, isCancelled); } catch { break; }
       }
     });
-  }, 500);
-  return () => { cancelled = true; clearTimeout(timer); };
+  });
+  return () => { cancelled = true; };
 }
 export async function invalidateGeneratedSpeech(text) {
   const key = keyFor(text);

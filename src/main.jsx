@@ -107,6 +107,7 @@ const defaultBoard = {
   settings: {
     voiceRate: 0.9,
     voicePitch: 1,
+    emergencyVoice: false,
     largeTiles: true,
     autoSpeakPhrase: true,
   },
@@ -943,6 +944,9 @@ function App() {
   const [boardLibrary, setBoardLibrary] = useState([]);
   const [editingChild, setEditingChild] = useState(null);
   const [cloudStatus, setCloudStatus] = useState("");
+  const [speechError, setSpeechError] = useState(false);
+  const retrySpeechRef = useRef("");
+  const speechAttemptRef = useRef(0);
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiError, setAiError] = useState("");
@@ -1161,13 +1165,21 @@ function App() {
       .map((item) => item.phrase || item.label));
   }, [activeCategory, authLoading, authUser?.uid, children.length]);
 
-  useEffect(() => () => stopGeneratedSpeech(), [activeChildId, activeCategoryId, authUser?.uid, currentBoardId]);
+  useEffect(() => {
+    setSpeechError(false);
+    return () => stopGeneratedSpeech();
+  }, [activeChildId, activeCategoryId, authUser?.uid, currentBoardId]);
 
-  function playSpeech(text) {
+  function playSpeech(text, retry = false) {
+    setSpeechError(false);
+    retrySpeechRef.current = text;
+    const attempt = ++speechAttemptRef.current;
     return playGeneratedSpeech(text, {
       rate: board.settings.voiceRate,
       pitch: board.settings.voicePitch,
-      preferSpeed: true,
+      emergencyVoice: board.settings.emergencyVoice === true,
+      retry,
+      onError: () => { if (attempt === speechAttemptRef.current) setSpeechError(true); },
     });
   }
 
@@ -1180,6 +1192,8 @@ function App() {
       setPhrase(nextPhrase);
     }
     if (tileItem.audio) {
+      speechAttemptRef.current += 1;
+      setSpeechError(false);
       stopGeneratedSpeech();
       playAudioSource(tileItem.audio);
       return;
@@ -1727,6 +1741,12 @@ function App() {
               <TileImage src={activeFeedback.tileItem.image} fallbackSize={92} />
             </div>
             <strong>{activeFeedback.tileItem.phrase || activeFeedback.tileItem.label}</strong>
+          </div>
+        ) : null}
+        {speechError ? (
+          <div role="status" aria-live="polite">
+            No se pudo reproducir la voz. Puedes intentarlo de nuevo.
+            <button className="mini-button" onClick={() => playSpeech(retrySpeechRef.current, true)}>Reintentar voz</button>
           </div>
         ) : null}
         <PhraseBuilder
@@ -2873,6 +2893,10 @@ function SettingsModal({ board, onClose, onSettings, onExport, onImport, onReset
         <label>
           Tono de voz
           <input type="range" min="0.7" max="1.4" step="0.05" value={board.settings.voicePitch} onChange={(event) => onSettings({ voicePitch: Number(event.target.value) })} />
+        </label>
+        <label className="toggle-row">
+          Voz local de emergencia (solo si falla Leda)
+          <input type="checkbox" checked={board.settings.emergencyVoice === true} onChange={(event) => onSettings({ emergencyVoice: event.target.checked })} />
         </label>
         <label className="toggle-row">
           Tarjetas grandes
