@@ -31,3 +31,37 @@ test('worker preserves model, Leda, Mexican child prompt, WAV and generation tim
     assert.equal(bytes.length, 46);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test('worker preserves HTTP failures, sanitizes errors and forwards Google quota delay', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const events = [];
+  console.warn = event => events.push(JSON.parse(event));
+  try {
+    for (const status of [400,403,429,500,502,503]) {
+      globalThis.fetch = async () => Response.json({error:{message:'sensitive upstream diagnostic', details:[{'@type':'type.googleapis.com/google.rpc.RetryInfo',retryDelay:'35048.2s'}]}},{status});
+      const response = await worker.fetch(new Request('https://worker/api/generate-speech',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'private phrase'})}),{GEMINI_API_KEY:'test-only'});
+      assert.equal(response.status,status);
+      const body = await response.json();
+      assert.ok(!JSON.stringify(body).includes('sensitive'));
+      if(status===429) {
+        assert.equal(body.code,'quota');
+        assert.equal(body.retryAfterMs,35048200);
+        assert.equal(response.headers.get('Retry-After'),'35049');
+      }
+    }
+    assert.ok(events.every(e => !JSON.stringify(e).includes('private phrase')));
+  } finally {globalThis.fetch=originalFetch;console.warn=originalWarn;}
+});
+
+test('worker rejects corrupt PCM instead of delivering an invalid WAV', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  globalThis.fetch = async () => Response.json({candidates:[{content:{parts:[{inlineData:{mimeType:'audio/L16;rate=24000',data:'AA=='}}]}}]});
+  try {
+    const response=await worker.fetch(new Request('https://worker/api/generate-speech',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'fixture'})}),{GEMINI_API_KEY:'test-only'});
+    assert.equal(response.status,502);
+    assert.equal((await response.json()).code,'format');
+  } finally {globalThis.fetch=originalFetch;console.warn=originalWarn;}
+});

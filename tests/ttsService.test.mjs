@@ -1,7 +1,10 @@
 import 'fake-indexeddb/auto';
+import { wavFixture } from './wavFixture.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+const policyStorage = new Map();
+Object.defineProperty(globalThis, "localStorage", { configurable:true, writable:true, value:{ getItem:key=>policyStorage.get(key), setItem:(key,value)=>policyStorage.set(key,value) } });
 let spoken = [];
 let played = [];
 let requests = [];
@@ -22,7 +25,7 @@ globalThis.Audio = class {
 };
 globalThis.fetch = () => new Promise((resolve) => requests.push(resolve));
 const tts = await import('../src/services/ttsService.js');
-const finish = (resolve) => resolve(new Response(new Blob(['audio']), { headers: { 'Content-Type': 'audio/wav' } }));
+const finish = (resolve) => resolve(new Response(new Blob([wavFixture()]), { headers: { 'Content-Type': 'audio/wav' } }));
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 async function waitRequests(count = 1) {
   for (let i = 0; i < 500 && requests.length < count; i++) await tick();
@@ -209,4 +212,71 @@ test('blocked playback offers retry and never silently replaces cached Leda', as
     assert.equal(requests.length, 0);
   } finally { rejectPlayback = false; }
   assert.equal(await tts.playGeneratedSpeech('sin red'), true);
+});
+
+test('HTTP errors retain generation status and controlled retry without native speech', async () => {
+  for (const status of [400, 403, 500, 502, 503]) {
+    let failure;
+    const result = tts.playGeneratedSpeech(`http-${status}`, { onError: error => { failure = error; } });
+    await waitRequests();
+    requests.shift()(Response.json({ code: status === 403 ? 'authentication' : 'generation', retryAfterMs: 1 }, { status }));
+    assert.equal(await result, false);
+    assert.equal(failure.status, status);
+    assert.equal(failure.stage, 'generation');
+  }
+});
+
+test('invalid network WAV is never played or cached and can be retried', async () => {
+  const before = played.length;
+  let failure;
+  const result = tts.playGeneratedSpeech('corrupt response', { onError: error => { failure = error; } });
+  await waitRequests();
+  requests.shift()(new Response('not wav', { headers: { 'Content-Type': 'audio/wav' } }));
+  assert.equal(await result, false);
+  assert.equal(failure.code, 'format');
+  assert.equal(played.length, before);
+  const next = tts.playGeneratedSpeech('corrupt response');
+  await waitRequests(); finish(requests.shift());
+  assert.equal(await next, true);
+});
+
+test('corrupt IndexedDB entry is evicted before generating a replacement', async () => {
+  const entries = await databaseOperation('readonly', store => store.getAll());
+  const template = entries.find(e => e.key.endsWith('|sin red'));
+  const key = template.key.replace(/sin red$/, 'corrupt cache');
+  await databaseOperation('readwrite', store => store.put({ ...template, key, audio: new Uint8Array([1,2]).buffer }));
+  const fresh = await import('../src/services/ttsService.js?invalid-cache');
+  const result = fresh.playGeneratedSpeech('corrupt cache');
+  await waitRequests();
+  const remaining = await databaseOperation('readonly', store => store.get(key));
+  assert.equal(remaining, undefined);
+  finish(requests.shift());
+  assert.equal(await result, true);
+  assert.ok(fresh.getSpeechMetrics().some(e => e.stage === 'error' && e.source === 'indexeddb' && e.code === 'format'));
+  fresh.stopGeneratedSpeech();
+});
+
+test('background reservation survives reloads and cannot spend the daily quota on preload', async () => {
+  const { reserveBackgroundGeneration } = await import('../src/services/ttsPolicy.js');
+  assert.equal(await reserveBackgroundGeneration(), true);
+  const reloaded = await import('../src/services/ttsPolicy.js?reload');
+  assert.equal(await reloaded.reserveBackgroundGeneration(), false);
+});
+
+test('quota applies to all texts across reloads, respects Retry-After, cached Leda still plays', async () => {
+  const values = new Map();
+  globalThis.localStorage = { getItem: key => values.get(key), setItem: (key,value) => values.set(key,value) };
+  let failure;
+  const result = tts.playGeneratedSpeech('quota one', { onError: error => { failure = error; } });
+  await waitRequests();
+  requests.shift()(Response.json({ code:'quota', retryAfterMs:3600000 }, { status:429 }));
+  assert.equal(await result, false);
+  assert.equal(failure.code, 'quota');
+  assert.ok(failure.retryAt > Date.now() + 3500000);
+  assert.equal(await tts.playGeneratedSpeech('quota other', { retry:true }), false);
+  const fresh = await import('../src/services/ttsService.js?quota-reload');
+  assert.equal(await fresh.playGeneratedSpeech('quota new', { retry:true }), false);
+  assert.equal(requests.length, 0);
+  assert.equal(await fresh.playGeneratedSpeech('sin red'), true);
+  fresh.stopGeneratedSpeech();
 });

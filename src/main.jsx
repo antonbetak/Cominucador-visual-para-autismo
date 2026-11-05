@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { auth, db, googleProvider, isFirebaseConfigured } from "./firebase";
 import { playGeneratedSpeech, stopGeneratedSpeech, playRecordedSpeech, prefetchGeneratedSpeech, invalidateGeneratedSpeech } from "./services/ttsService";
+import { SpeechNotice } from "./SpeechNotice.js";
 import "./styles.css";
 import logoNunuUrl from "../logo_nunu.jpeg";
 
@@ -1170,8 +1171,13 @@ function App() {
     return () => stopGeneratedSpeech();
   }, [activeChildId, activeCategoryId, authUser?.uid, currentBoardId]);
 
+  useEffect(() => {
+    if (!speechError?.retryAt || speechError.retryAt <= Date.now()) return;
+    const timer = window.setTimeout(() => setSpeechError(previous => previous ? { ...previous, retryAt: 0 } : previous), Math.min(speechError.retryAt - Date.now() + 50, 86400000));
+    return () => window.clearTimeout(timer);
+  }, [speechError?.retryAt]);
+
   function playSpeech(text, retry = false) {
-    setSpeechError(false);
     retrySpeechRef.current = text;
     const attempt = ++speechAttemptRef.current;
     return playGeneratedSpeech(text, {
@@ -1179,7 +1185,12 @@ function App() {
       pitch: board.settings.voicePitch,
       emergencyVoice: board.settings.emergencyVoice === true,
       retry,
-      onError: () => { if (attempt === speechAttemptRef.current) setSpeechError(true); },
+      onError: (error) => {
+        if (attempt === speechAttemptRef.current) setSpeechError(previous => previous?.code === error.code && previous?.retryAt === error.retryAt ? previous : error);
+      },
+    }).then((played) => {
+      if (played && attempt === speechAttemptRef.current) setSpeechError(false);
+      return played;
     });
   }
 
@@ -1743,13 +1754,8 @@ function App() {
             <strong>{activeFeedback.tileItem.phrase || activeFeedback.tileItem.label}</strong>
           </div>
         ) : null}
-        {speechError ? (
-          <div role="status" aria-live="polite">
-            No se pudo reproducir la voz. Puedes intentarlo de nuevo.
-            <button className="mini-button" onClick={() => playSpeech(retrySpeechRef.current, true)}>Reintentar voz</button>
-          </div>
-        ) : null}
         <PhraseBuilder
+          speechNotice={<SpeechNotice error={speechError} onRetry={() => playSpeech(retrySpeechRef.current, true)} />}
           phraseItems={phrase}
           phraseText={phraseText}
           limitPulseKey={phraseLimitKey}
@@ -2069,7 +2075,7 @@ function AiBoardModal({
   );
 }
 
-function PhraseBuilder({ phraseItems, phraseText, limitPulseKey, onPlay, onRemoveLast, onClear }) {
+function PhraseBuilder({ speechNotice, phraseItems, phraseText, limitPulseKey, onPlay, onRemoveLast, onClear }) {
   const endRef = useRef(null);
   const removeTimeoutRef = useRef(null);
   const [removingKey, setRemovingKey] = useState(null);
@@ -2124,6 +2130,7 @@ function PhraseBuilder({ phraseItems, phraseText, limitPulseKey, onPlay, onRemov
           <X size={22} />
         </button>
       </div>
+      {speechNotice}
     </header>
   );
 }

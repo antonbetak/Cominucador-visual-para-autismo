@@ -1,3 +1,4 @@
+import { inspectWav } from "../src/services/wav.js";
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
 const GEMINI_MODEL_CANDIDATES = [GEMINI_MODEL];
 const GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
@@ -125,6 +126,10 @@ async function generateSpeech({ apiKey, text, voiceStyle = "child", origin = "" 
   if (!response.ok) {
     const error = new Error(data?.error?.message || "Gemini TTS request failed");
     error.status = response.status;
+    error.code = response.status === 429 ? "quota" : [401, 403].includes(response.status) ? "authentication" : response.status === 400 ? "configuration" : "generation";
+    const delay = data?.error?.details?.find((item) => item?.["@type"]?.endsWith("RetryInfo"))?.retryDelay;
+    const prose = String(data?.error?.message || "").match(/retry in (?:(\d+)h)?(?:(\d+)m)?([\d.]+)s/i);
+    error.retryAfterMs = delay ? Math.ceil(parseFloat(delay) * 1000) : prose ? Math.ceil((Number(prose[1] || 0) * 3600 + Number(prose[2] || 0) * 60 + Number(prose[3])) * 1000) : response.status === 429 ? 60000 : 3000;
     throw error;
   }
 
@@ -142,6 +147,7 @@ async function generateSpeech({ apiKey, text, voiceStyle = "child", origin = "" 
   } else {
     throw new Error(`Unsupported Gemini TTS audio format: ${inlineData.mimeType || "unknown"}`);
   }
+  inspectWav(wavBytes);
   return new Response(wavBytes, {
     status: 200,
     headers: {
@@ -423,10 +429,14 @@ export default {
         try {
           return await generateSpeech({ apiKey, text, voiceStyle, origin });
         } catch (error) {
-          const status = [400, 401, 403, 429].includes(error?.status) ? error.status : 502;
-          return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "No pude generar la voz" }), {
+          const status = [400, 401, 403, 429, 500, 502, 503, 504].includes(error?.status) ? error.status : 502;
+          const code = error?.code || (error instanceof TypeError ? "network" : "generation");
+          const retryAfterMs = Math.max(0, Math.min(Number(error?.retryAfterMs) || (status === 429 ? 60000 : 3000), 86400000));
+          // No text, upstream messages, credentials or request bodies in telemetry.
+          console.warn(JSON.stringify({ event: "tts_failure", code, status, retryAfterMs }));
+          return new Response(JSON.stringify({ error: code === "quota" ? "La cuota de voz está agotada temporalmente." : "No se pudo preparar la voz.", code, upstreamStatus: error?.status || null, retryAfterMs }), {
             status,
-            headers: { "Content-Type": "application/json", ...buildCorsHeaders(origin) },
+            headers: { "Content-Type": "application/json", "Retry-After": String(Math.ceil(retryAfterMs / 1000)), "Access-Control-Expose-Headers": "Retry-After", ...buildCorsHeaders(origin) },
           });
         }
       }

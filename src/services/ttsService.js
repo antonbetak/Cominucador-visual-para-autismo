@@ -1,3 +1,5 @@
+import { inspectWav } from "./wav.js";
+import { getQuotaUntil, blockQuota, reserveBackgroundGeneration } from "./ttsPolicy.js";
 const TTS_ENDPOINT = "/api/generate-speech";
 export const NUNU_TTS_STYLE = "child";
 export const NUNU_TTS_VOICE = "Leda";
@@ -19,6 +21,16 @@ let foregroundRequests = 0;
 const diskReads = new Map();
 let activeUrl;
 const metrics = [];
+const validBlobs = new WeakSet();
+function speechError(code, stage, status = 0, retryAt = 0) {
+  return Object.assign(new Error(code), { code, stage, status, retryAt });
+}
+async function validateBlob(blob) {
+  if (validBlobs.has(blob)) return;
+  try { inspectWav(new Uint8Array(await blob.arrayBuffer())); }
+  catch { throw speechError("format", "format"); }
+  validBlobs.add(blob);
+}
 
 function measure(stage, started, extra = {}) {
   const entry = { stage, ms: +(performance.now() - started).toFixed(1), ...extra };
@@ -109,6 +121,13 @@ async function readCached(text) {
     if (revisions.get(key) !== revision) return null;
     if (!saved || !storedSize(saved) || Date.now() - saved.createdAt >= MAX_AGE) return null;
     const blob = saved.blob || new Blob([saved.audio], { type: saved.mimeType || "audio/wav" });
+    try { await validateBlob(blob); }
+    catch (error) {
+      measure("error", started, { source: "indexeddb", code: error.code, failureStage: "cache" });
+      await storeOperation("readwrite", store => store.delete(key));
+      return null;
+    }
+    if (revisions.get(key) !== revision) return null;
     remember(key, blob);
     void storeOperation("readwrite", (store) => store.put({ ...saved, usedAt: Date.now() }));
     measure("cache", started, { source: "indexeddb" });
@@ -137,10 +156,16 @@ async function requestSpeech(text, background = false, cancelled = () => false) 
       await waitForForeground(() => pending.get(key)?.promoted);
       if (cancelled() && !pending.get(key)?.promoted) throw new Error("Cancelled preload");
     }
-    if ((failures.get(key) || 0) > Date.now()) throw new Error("TTS cooldown");
+    if (getQuotaUntil() > Date.now()) throw speechError("quota", "generation", 429, getQuotaUntil());
+    const previous = failures.get(key);
+    if (previous?.retryAt > Date.now()) throw previous;
     const backgroundOnly = background && !pending.get(key)?.promoted;
     if (backgroundOnly && backgroundGenerations >= 24) throw new Error("Background budget exhausted");
-    if (backgroundOnly) backgroundGenerations += 1;
+    if (backgroundOnly) {
+      if (!await reserveBackgroundGeneration()) throw speechError("background_budget", "policy");
+      if (cancelled() && !pending.get(key)?.promoted) throw speechError("cancelled", "policy");
+      backgroundGenerations += 1;
+    }
     const started = performance.now();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20000);
@@ -150,10 +175,18 @@ async function requestSpeech(text, background = false, cancelled = () => false) 
         body: JSON.stringify({ text, voiceStyle: NUNU_TTS_STYLE }), signal: controller.signal,
       });
       measure("request", started, { serverTiming: response.headers.get("Server-Timing") });
-      if (!response.ok || !response.headers.get("Content-Type")?.startsWith("audio/")) throw new Error(`TTS ${response.status}`);
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        const code = response.status === 429 ? "quota" : detail.code || ([401, 403].includes(response.status) ? "authentication" : response.status === 400 ? "configuration" : "generation");
+        const delay = Number(detail.retryAfterMs) || Number(response.headers.get("Retry-After")) * 1000 || (response.status === 429 ? 60000 : 3000);
+        const error = speechError(code, "generation", response.status, Date.now() + Math.max(0, Math.min(delay, 86400000)));
+        if (response.status === 429) blockQuota(error.retryAt);
+        throw error;
+      }
+      if (!response.headers.get("Content-Type")?.toLowerCase().startsWith("audio/wav")) throw speechError("format", "format", response.status);
       const download = performance.now();
       const blob = await response.blob();
-      if (!blob.size) throw new Error("Empty TTS audio");
+      await validateBlob(blob);
       measure("download", download, { bytes: blob.size });
       let persisted;
       if (revisions.get(key) === revision) {
@@ -163,8 +196,9 @@ async function requestSpeech(text, background = false, cancelled = () => false) 
       if (revisions.get(key) !== revision) throw new Error("Invalidated speech");
       return { blob, source: "generated", persisted };
     } catch (error) {
-      failures.set(key, Date.now() + 60000);
-      throw error;
+      const failure = typeof error.code === "string" ? error : speechError(error.name === "AbortError" ? "timeout" : "network", "network");
+      if (failure.retryAt) failures.set(key, failure);
+      throw failure;
     } finally { clearTimeout(timeout); }
   })();
   pending.set(key, task);
@@ -209,7 +243,7 @@ async function playBlob(source, token, started, sourceName) {
   audio.onended = release;
   audio.onerror = release;
   try { await audio.play(); return token === sequence; }
-  catch (error) { if (token !== sequence) return false; releaseAudio(); throw error; }
+  catch (error) { if (token !== sequence) return false; releaseAudio(); throw speechError(error.name === "NotAllowedError" ? "blocked" : "playback", "playback"); }
 }
 export async function playRecordedSpeech(source) {
   stopGeneratedSpeech();
@@ -255,7 +289,7 @@ export async function playGeneratedSpeech(text, options = {}) {
     if (token !== sequence) return false;
     // Recheck the cache: another tab or a finishing request may have stored Leda.
     // A rejected play must not retry automatically (Safari may require another tap).
-    if (error?.name !== "NotAllowedError") {
+    if (error?.stage !== "playback") {
       const recovered = await readCached(text);
       if (token !== sequence) return false;
       if (recovered) {
@@ -265,9 +299,9 @@ export async function playGeneratedSpeech(text, options = {}) {
     }
     if (token !== sequence) return false;
     releaseAudio();
-    measure("error", started, { source: "gemini", reason: error?.name || "Error" });
+    measure("error", started, { source: "tts", code: error.code || "unknown", failureStage: error.stage || "unknown", status: error.status || 0, retryAt: error.retryAt || 0 });
     if (options.emergencyVoice === true && speakFallback(text, options, token, started)) return true;
-    options.onError?.();
+    options.onError?.({ code: error.code || "unknown", stage: error.stage || "unknown", status: error.status || 0, retryAt: error.retryAt || 0 });
     return false;
   }
 }

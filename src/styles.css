@@ -3191,3 +3191,18 @@ input[type="checkbox"] {
     flex: none;
   }
 }
+/* The voice notice occupies its own row inside the existing sticky phrase bar. */
+.speech-notice {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  min-width: 0;
+  padding: 6px 0;
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+.speech-notice > span { flex: 1 1 200px; overflow-wrap: anywhere; }
+.speech-notice > button { flex: 0 0 auto; width: auto; min-width: max-content; min-height: 44px; padding-inline: 12px; }
