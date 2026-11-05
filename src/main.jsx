@@ -108,7 +108,6 @@ const defaultBoard = {
   settings: {
     voiceRate: 0.9,
     voicePitch: 1,
-    emergencyVoice: false,
     largeTiles: true,
     autoSpeakPhrase: true,
   },
@@ -1183,7 +1182,6 @@ function App() {
     return playGeneratedSpeech(text, {
       rate: board.settings.voiceRate,
       pitch: board.settings.voicePitch,
-      emergencyVoice: board.settings.emergencyVoice === true,
       retry,
       onError: (error) => {
         if (attempt === speechAttemptRef.current) setSpeechError(previous => previous?.code === error.code && previous?.retryAt === error.retryAt ? previous : error);
@@ -2900,10 +2898,6 @@ function SettingsModal({ board, onClose, onSettings, onExport, onImport, onReset
         <label>
           Tono de voz
           <input type="range" min="0.7" max="1.4" step="0.05" value={board.settings.voicePitch} onChange={(event) => onSettings({ voicePitch: Number(event.target.value) })} />
-        </label>
-        <label className="toggle-row">
-          Voz local de emergencia (solo si falla Leda)
-          <input type="checkbox" checked={board.settings.emergencyVoice === true} onChange={(event) => onSettings({ emergencyVoice: event.target.checked })} />
         </label>
         <label className="toggle-row">
           Tarjetas grandes

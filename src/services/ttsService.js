@@ -212,22 +212,54 @@ function releaseAudio() {
 export function stopGeneratedSpeech() {
   sequence += 1;
   globalThis.speechSynthesis?.cancel();
+  activeFallback?.settle(false);
   releaseAudio();
 }
+const FALLBACK_START_TIMEOUT = 5000;
+let activeFallback = null;
+// Resolve true only when the utterance really starts: an utterance that errors,
+// is cancelled or never starts must report failure so the caregiver can retry.
 function speakFallback(text, options, token, started) {
-  if (token !== sequence || !globalThis.speechSynthesis || !globalThis.SpeechSynthesisUtterance) return false;
-  const utterance = new SpeechSynthesisUtterance(text);
+  if (token !== sequence || !globalThis.speechSynthesis || !globalThis.SpeechSynthesisUtterance) return Promise.resolve(false);
+  let utterance;
+  try { utterance = new SpeechSynthesisUtterance(text); }
+  catch { return Promise.resolve(false); }
   utterance.lang = "es-MX";
   utterance.rate = options.rate ?? 1;
   utterance.pitch = options.pitch ?? 1;
-  const voices = speechSynthesis.getVoices();
-  utterance.voice = voices.find((voice) => voice.lang.toLowerCase() === "es-mx") || voices.find((voice) => voice.lang.toLowerCase().startsWith("es")) || null;
-  utterance.onstart = () => {
-    if (token !== sequence) return;
-    measure("playback", started, { source: "speechSynthesis" });
-  };
-  speechSynthesis.speak(utterance);
-  return true;
+  try {
+    const voices = speechSynthesis.getVoices?.() || [];
+    utterance.voice = voices.find((voice) => voice.lang?.toLowerCase() === "es-mx") || voices.find((voice) => voice.lang?.toLowerCase().startsWith("es")) || null;
+  } catch { /* Voice selection is best effort. */ }
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (spoken) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (activeFallback?.utterance === utterance) activeFallback = null;
+      resolve(spoken);
+    };
+    // A dropped utterance must neither hang the tap nor speak late.
+    const timer = setTimeout(() => {
+      try { speechSynthesis.cancel(); } catch { /* Best effort. */ }
+      settle(false);
+    }, FALLBACK_START_TIMEOUT);
+    utterance.onstart = () => {
+      if (token !== sequence) {
+        try { speechSynthesis.cancel(); } catch { /* Best effort. */ }
+        return settle(false);
+      }
+      measure("playback", started, { source: "speechSynthesis" });
+      settle(true);
+    };
+    utterance.onerror = () => settle(false);
+    // Ending without a start event is not a successful playback.
+    utterance.onend = () => settle(false);
+    activeFallback = { utterance, settle };
+    try { speechSynthesis.speak(utterance); }
+    catch { settle(false); }
+  });
 }
 async function playBlob(source, token, started, sourceName) {
   if (token !== sequence) return false;
@@ -300,7 +332,11 @@ export async function playGeneratedSpeech(text, options = {}) {
     if (token !== sequence) return false;
     releaseAudio();
     measure("error", started, { source: "tts", code: error.code || "unknown", failureStage: error.stage || "unknown", status: error.status || 0, retryAt: error.retryAt || 0 });
-    if (options.emergencyVoice === true && speakFallback(text, options, token, started)) return true;
+    // The emergency voice is automatic: a Gemini failure (quota, network, error or timeout)
+    // must never leave Nunu silent. A local playback block keeps the retry notice instead
+    // of replacing Leda audio that is already available on this device.
+    if (error?.stage !== "playback" && await speakFallback(text, options, token, started)) return true;
+    if (token !== sequence) return false;
     options.onError?.({ code: error.code || "unknown", stage: error.stage || "unknown", status: error.status || 0, retryAt: error.retryAt || 0 });
     return false;
   }

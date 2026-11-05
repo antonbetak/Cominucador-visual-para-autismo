@@ -6,10 +6,27 @@ import assert from 'node:assert/strict';
 const policyStorage = new Map();
 Object.defineProperty(globalThis, "localStorage", { configurable:true, writable:true, value:{ getItem:key=>policyStorage.get(key), setItem:(key,value)=>policyStorage.set(key,value) } });
 let spoken = [];
+let utterances = [];
 let played = [];
 let requests = [];
 let rejectPlayback = false;
-globalThis.speechSynthesis = { cancel() {}, getVoices: () => [], speak: (u) => spoken.push(u.text) };
+// "start": the utterance starts; "error": onerror fires; "never": the browser drops it without events.
+let speechMode = "start";
+const cancelledUtterances = new Set();
+globalThis.speechSynthesis = {
+  cancel() { for (const utterance of utterances) cancelledUtterances.add(utterance); },
+  getVoices: () => [],
+  speak: (utterance) => {
+    utterances.push(utterance);
+    if (speechMode === "never") return;
+    setTimeout(() => {
+      if (cancelledUtterances.has(utterance)) return;
+      if (speechMode === "error") return utterance.onerror?.({ error: "synthesis-failed" });
+      spoken.push(utterance.text);
+      utterance.onstart?.();
+    }, 0);
+  },
+};
 globalThis.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
 globalThis.Audio = class {
   addEventListener() {}
@@ -23,7 +40,11 @@ globalThis.Audio = class {
     }
   }
 };
-globalThis.fetch = () => new Promise((resolve) => requests.push(resolve));
+globalThis.fetch = () => new Promise((resolve, reject) => {
+  const send = (value) => resolve(value);
+  send.reject = reject;
+  requests.push(send);
+});
 const tts = await import('../src/services/ttsService.js');
 const finish = (resolve) => resolve(new Response(new Blob([wavFixture()]), { headers: { 'Content-Type': 'audio/wav' } }));
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -61,7 +82,7 @@ test('only latest selection plays when requests finish out of order', async () =
 });
 
 test('recording cancels pending speech; stale failure cannot speak', async () => {
-  const a = tts.playGeneratedSpeech('pendiente', { emergencyVoice: true });
+  const a = tts.playGeneratedSpeech('pendiente');
   await waitRequests();
   await tts.playRecordedSpeech('recording.mp4');
   assert.equal(played.at(-1), 'recording.mp4');
@@ -137,30 +158,85 @@ test('invalidating in-flight generation cannot repopulate its old cache', async 
   assert.ok(!entries.some((entry) => entry.key.endsWith('|anterior')));
 });
 
+test('when Gemini is available Leda speaks and the emergency voice stays silent', async () => {
+  const before = spoken.length;
+  const result = tts.playGeneratedSpeech('gemini disponible');
+  await waitRequests();
+  assert.equal(spoken.length, before); // never while Leda is being generated
+  finish(requests.shift());
+  assert.equal(await result, true);
+  assert.equal(spoken.length, before); // Leda played, no local voice
+});
 
-test('Gemini error reports retry without automatically enabling local voice', async () => {
+test('a Gemini failure speaks with the local emergency voice and retry recovers Leda', async () => {
   let errors = 0;
   const before = spoken.length;
   const result = tts.playGeneratedSpeech('sin red', { onError: () => errors++ });
   await waitRequests();
   requests.shift()(new Response('', { status: 502 }));
-  assert.equal(await result, false);
-  assert.equal(errors, 1);
-  assert.equal(spoken.length, before);
+  assert.equal(await result, true);
+  assert.equal(errors, 0); // no error notice when the emergency voice spoke
+  assert.equal(spoken.length, before + 1);
+  assert.equal(spoken.at(-1), 'sin red');
   const retry = tts.playGeneratedSpeech('sin red', { retry: true });
   await waitRequests();
   finish(requests.shift());
   assert.equal(await retry, true);
+  assert.equal(spoken.length, before + 1); // Leda recovered as the main voice
 });
 
-test('local emergency voice requires explicit opt-in and a Gemini failure', async () => {
+test('the emergency voice is automatic and speaks only after a Gemini failure', async () => {
   const before = spoken.length;
-  const result = tts.playGeneratedSpeech('emergencia', { emergencyVoice: true });
+  const result = tts.playGeneratedSpeech('emergencia');
   await waitRequests();
-  assert.equal(spoken.length, before);
+  assert.equal(spoken.length, before); // never while waiting for Leda
   requests.shift()(new Response('', { status: 503 }));
   assert.equal(await result, true);
   assert.equal(spoken.length, before + 1);
+  assert.equal(spoken.at(-1), 'emergencia');
+});
+
+test('without a connection the emergency voice speaks instead of staying silent', async () => {
+  const before = spoken.length;
+  const result = tts.playGeneratedSpeech('sin conexion');
+  await waitRequests();
+  requests.shift().reject(new TypeError('Failed to fetch'));
+  assert.equal(await result, true);
+  assert.equal(spoken.length, before + 1);
+  assert.equal(spoken.at(-1), 'sin conexion');
+  assert.ok(tts.getSpeechMetrics().some((entry) => entry.stage === 'error' && entry.code === 'network'));
+});
+
+test('the emergency voice reports success only when speech actually starts', async () => {
+  speechMode = "error";
+  try {
+    const before = spoken.length;
+    let failure;
+    const result = tts.playGeneratedSpeech('voz fallida', { onError: (error) => { failure = error; } });
+    await waitRequests();
+    requests.shift()(new Response('', { status: 503 }));
+    assert.equal(await result, false); // never started: not a success
+    assert.equal(spoken.length, before);
+    assert.equal(failure.status, 503); // the caregiver keeps the retry notice
+  } finally { speechMode = "start"; }
+});
+
+test('a new tap cancels a pending emergency voice and only the latest speaks', async () => {
+  speechMode = "never";
+  const a = tts.playGeneratedSpeech('primera local');
+  await waitRequests();
+  requests.shift()(new Response('', { status: 503 }));
+  const seen = utterances.length;
+  for (let i = 0; i < 100 && utterances.length === seen; i++) await tick();
+  assert.equal(utterances.length, seen + 1); // the fallback utterance reached the browser
+  speechMode = "start";
+  const b = tts.playGeneratedSpeech('segunda local');
+  await waitRequests();
+  requests.shift()(new Response('', { status: 503 }));
+  assert.equal(await a, false); // cancelled before it ever started
+  assert.equal(await b, true);
+  assert.ok(!spoken.includes('primera local'));
+  assert.equal(spoken.at(-1), 'segunda local');
 });
 
 test('category preload restores stored audio without generating or using local voice', async () => {
@@ -214,30 +290,34 @@ test('blocked playback offers retry and never silently replaces cached Leda', as
   assert.equal(await tts.playGeneratedSpeech('sin red'), true);
 });
 
-test('HTTP errors retain generation status and controlled retry without native speech', async () => {
+test('HTTP errors keep their status in metrics and speak with the emergency voice', async () => {
   for (const status of [400, 403, 500, 502, 503]) {
-    let failure;
-    const result = tts.playGeneratedSpeech(`http-${status}`, { onError: error => { failure = error; } });
+    const before = spoken.length;
+    const result = tts.playGeneratedSpeech(`http-${status}`);
     await waitRequests();
     requests.shift()(Response.json({ code: status === 403 ? 'authentication' : 'generation', retryAfterMs: 1 }, { status }));
-    assert.equal(await result, false);
-    assert.equal(failure.status, status);
-    assert.equal(failure.stage, 'generation');
+    assert.equal(await result, true);
+    assert.equal(spoken.length, before + 1);
+    assert.ok(tts.getSpeechMetrics().some((entry) => entry.stage === 'error' && entry.status === status && entry.failureStage === 'generation'));
   }
 });
 
-test('invalid network WAV is never played or cached and can be retried', async () => {
+test('invalid network WAV is never played or cached; the emergency voice speaks and Leda can be retried', async () => {
   const before = played.length;
-  let failure;
-  const result = tts.playGeneratedSpeech('corrupt response', { onError: error => { failure = error; } });
+  const beforeSpoken = spoken.length;
+  const result = tts.playGeneratedSpeech('corrupt response');
   await waitRequests();
   requests.shift()(new Response('not wav', { headers: { 'Content-Type': 'audio/wav' } }));
-  assert.equal(await result, false);
-  assert.equal(failure.code, 'format');
-  assert.equal(played.length, before);
+  assert.equal(await result, true);
+  assert.equal(played.length, before); // invalid audio never reached the speaker
+  assert.equal(spoken.length, beforeSpoken + 1);
+  assert.equal(spoken.at(-1), 'corrupt response');
   const next = tts.playGeneratedSpeech('corrupt response');
-  await waitRequests(); finish(requests.shift());
-  assert.equal(await next, true);
+  await waitRequests();
+  finish(requests.shift());
+  assert.equal(await next, true); // Leda on retry
+  assert.equal(played.length, before + 1);
+  assert.equal(spoken.length, beforeSpoken + 1);
 });
 
 test('corrupt IndexedDB entry is evicted before generating a replacement', async () => {
@@ -263,20 +343,42 @@ test('background reservation survives reloads and cannot spend the daily quota o
   assert.equal(await reloaded.reserveBackgroundGeneration(), false);
 });
 
-test('quota applies to all texts across reloads, respects Retry-After, cached Leda still plays', async () => {
+// This test must run before the one-hour quota block below: the block is shared by every module instance.
+test('when the quota block ends Gemini is retried and Leda speaks again', async () => {
+  const before = spoken.length;
+  const blocked = tts.playGeneratedSpeech('quota breve');
+  await waitRequests();
+  requests.shift()(Response.json({ code: 'quota', retryAfterMs: 60 }, { status: 429 }));
+  assert.equal(await blocked, true); // emergency voice during the block
+  assert.equal(spoken.length, before + 1);
+  await new Promise((resolve) => setTimeout(resolve, 90));
+  const recovered = tts.playGeneratedSpeech('quota breve', { retry: true });
+  await waitRequests();
+  finish(requests.shift());
+  assert.equal(await recovered, true);
+  assert.equal(spoken.length, before + 1); // Leda is the main voice again
+});
+
+test('quota applies to all texts across reloads, speaks locally without network, cached Leda still plays', async () => {
   const values = new Map();
   globalThis.localStorage = { getItem: key => values.get(key), setItem: (key,value) => values.set(key,value) };
-  let failure;
-  const result = tts.playGeneratedSpeech('quota one', { onError: error => { failure = error; } });
+  const before = spoken.length;
+  const result = tts.playGeneratedSpeech('quota one');
   await waitRequests();
   requests.shift()(Response.json({ code:'quota', retryAfterMs:3600000 }, { status:429 }));
-  assert.equal(await result, false);
-  assert.equal(failure.code, 'quota');
-  assert.ok(failure.retryAt > Date.now() + 3500000);
-  assert.equal(await tts.playGeneratedSpeech('quota other', { retry:true }), false);
-  const fresh = await import('../src/services/ttsService.js?quota-reload');
-  assert.equal(await fresh.playGeneratedSpeech('quota new', { retry:true }), false);
+  assert.equal(await result, true); // emergency voice, never silence
+  assert.equal(spoken.at(-1), 'quota one');
+  assert.ok(tts.getSpeechMetrics().some((entry) => entry.stage === 'error' && entry.code === 'quota' && entry.retryAt > Date.now() + 3500000));
+  // A known quota block speaks locally without spending a request we know will fail.
+  assert.equal(await tts.playGeneratedSpeech('quota other'), true);
+  assert.equal(spoken.at(-1), 'quota other');
   assert.equal(requests.length, 0);
-  assert.equal(await fresh.playGeneratedSpeech('sin red'), true);
+  const fresh = await import('../src/services/ttsService.js?quota-reload');
+  assert.equal(await fresh.playGeneratedSpeech('quota new'), true);
+  assert.equal(requests.length, 0);
+  const spokenBeforeCached = spoken.length;
+  assert.equal(await fresh.playGeneratedSpeech('sin red'), true); // cached Leda, not the local voice
+  assert.equal(spoken.length, spokenBeforeCached);
+  assert.equal(spoken.length, before + 3);
   fresh.stopGeneratedSpeech();
 });
